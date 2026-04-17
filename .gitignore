@@ -1,0 +1,48 @@
+# ── Rust build artifacts ──────────────────────────────────────────────────────
+/target/
+blockchain/target/
+contracts/target/
+cli/target/
+**/*.rs.bk
+
+# ── Node / Web ────────────────────────────────────────────────────────────────
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
+web/.env.devnet
+web/.env.testnet
+web/.env.mainnet
+
+# ── Secrets / deployments ─────────────────────────────────────────────────────
+deployments.json
+.env
+.env.*
+!.env.example
+
+# ── Zombienet runtime temp dirs ───────────────────────────────────────────────
+/tmp/
+zombie-*
+/blockchain/zombie-*
+
+# ── Chain specs sa kompajliranim WASM-om (regenerišu se build skriptom) ───────
+# Uključujemo ih jer su potrebni za devnet, ali ignorišemo docker kopije
+docker/chain_spec*.json
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── PolkaVM artifacts ─────────────────────────────────────────────────────────
+**/*.polkavm
+**/*.contract
+
+# ── Go build cache ───────────────────────────────────────────────────────────
+core/curvy-core.wasm
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
