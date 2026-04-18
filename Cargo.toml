@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+	"blockchain/runtime",
+	"blockchain/pallets/template",
+	"blockchain/pallets/stealth-addresses",
+	"cli",
+]
+
+[workspace.package]
+license = "MIT"
+authors = ["Polkadot Stack Template Contributors"]
+homepage = "https://github.com/parity-Asia/polkadot-stack-template"
+repository = "https://github.com/parity-Asia/polkadot-stack-template.git"
+edition = "2021"
+
+[workspace.dependencies]
+# Local crates
+pallet-template = { path = "./blockchain/pallets/template", default-features = false }
+pallet-stealth-addresses = { path = "./blockchain/pallets/stealth-addresses", default-features = false }
+
+# Common dependencies
+codec = { version = "3.7.4", default-features = false, package = "parity-scale-codec" }
+docify = { version = "0.2.9" }
+hex-literal = { version = "0.4.1", default-features = false }
+log = { version = "0.4.22", default-features = false }
+scale-info = { version = "2.11.6", default-features = false }
+serde = { version = "1.0.214", default-features = false }
+serde_json = { version = "1.0.132", default-features = false }
+smallvec = { version = "1.13.1", default-features = false }
+
+# Polkadot SDK
+polkadot-sdk = { version = "2512.3.3", default-features = false }
+cumulus-pallet-parachain-system = { version = "0.25.0", default-features = false }
+substrate-wasm-builder = { version = "31.1.0" }
+
+# FRAME (experimental umbrella crate - used by pallets)
+frame = { version = "0.14.0", default-features = false, package = "polkadot-sdk-frame" }
+
+# Used by pallet dev-deps
+sp-core = { version = "39.0.0" }
+sp-io = { version = "44.0.0", default-features = false }
+sp-statement-store = { version = "24.0.0" }
+
+# CLI dependencies
+subxt = { version = "0.38" }
+subxt-signer = { version = "0.38", features = ["sr25519", "subxt"] }
+tokio = { version = "1", features = ["full"] }
+alloy = { version = "1.8", features = ["contract", "provider-http", "signer-local"] }
+
+# Patch pallet-revive-proc-macro to 0.7.1 from polkadot-sdk stable2512-3.
+# Version 0.7.2 on crates.io has a compilation bug with #[stable] host function attributes.
+#
+# Patch cumulus-pallet-parachain-system: fix za DMQ head mismatch na svežem para.
+# Bug: unwrap_or({sent_at:0, reverse_idx:0}) briše genesis DMP poruke za svež para.
+# Fix: kad LastProcessedDownwardMessage=None i LastRelayChainBlockNumber=0, ne brišemo ništa.
+[patch.crates-io]
+pallet-revive-proc-macro = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-3" }
+cumulus-pallet-parachain-system = { path = "./blockchain/vendor/cumulus-pallet-parachain-system" }
+
+[profile.release]
+opt-level = 3
+panic = "unwind"
+
+[profile.production]
+codegen-units = 1
+inherits = "release"
+lto = true
