@@ -2,7 +2,6 @@
 /target/
 blockchain/target/
 contracts/target/
-contracts/rust/target/
 cli/target/
 **/*.rs.bk
 
@@ -43,19 +42,6 @@ docker/chain_spec*.json
 
 # ── Go build cache ───────────────────────────────────────────────────────────
 core/curvy-core.wasm
-
-# ── Hardhat / contract build artifacts ───────────────────────────────────────
-contracts/rust/artifacts/
-contracts/rust/cache/
-contracts/rust/node_modules/
-contracts/rust/package-lock.json
-
-# ── Node / npm ────────────────────────────────────────────────────────────────
-node_modules/
-package-lock.json
-
-# ── TypeScript build info ─────────────────────────────────────────────────────
-*.tsbuildinfo
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
