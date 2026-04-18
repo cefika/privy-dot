@@ -1,0 +1,41 @@
+{
+  "name": "privy-dot-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "fmt": "prettier --write 'src/**/*.{ts,tsx}'"
+  },
+  "dependencies": {
+    "@polkadot/api": "^15.0.1",
+    "@polkadot/keyring": "^13.4.3",
+    "@polkadot/util": "^13.4.3",
+    "@polkadot/util-crypto": "^13.4.3",
+    "ethers": "^6.13.0",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.39.4",
+    "postcss": "^8.4.49",
+    "prettier": "^3.8.1",
+    "tailwindcss": "^3.4.15",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.58.1",
+    "vite": "^6.0.1"
+  }
+}
