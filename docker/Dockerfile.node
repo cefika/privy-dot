@@ -1,0 +1,38 @@
+# Multi-stage build: compile the runtime WASM, generate a chain spec, then
+# package it into the lightweight polkadot-omni-node image.
+#
+# No Rust toolchain or polkadot-sdk binaries needed on the host.
+
+# Stage 1 — Build the parachain runtime WASM binary
+FROM rust:bookworm AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
+RUN rustup target add wasm32-unknown-unknown && rustup component add rust-src
+COPY Cargo.toml Cargo.lock ./
+COPY blockchain/ blockchain/
+COPY cli/ cli/
+RUN cargo build -p stack-template-runtime --release
+
+# Stage 2 — Generate the chain spec from the compiled WASM
+# cargo install fails because core2 v0.4.0 was yanked from crates.io.
+# Using --git --locked resolves against the polkadot-sdk Cargo.lock which
+# already pins core2 = "0.4.0", and --locked allows yanked versions that
+# are present in the lock file.
+RUN cargo install --git https://github.com/paritytech/polkadot-sdk \
+    --tag polkadot-stable2512-3 \
+    --locked \
+    staging-chain-spec-builder
+RUN chain-spec-builder \
+    -c /build/chain_spec.json \
+    create \
+    --chain-name "Polkadot Stack Template" \
+    --chain-id "polkadot-stack-template" \
+    -t development \
+    --relay-chain rococo-local \
+    --para-id 1000 \
+    --runtime target/release/wbuild/stack-template-runtime/stack_template_runtime.compact.compressed.wasm \
+    named-preset development
+
+# Stage 3 — Final image: just the omni-node binary + our chain spec
+FROM docker.io/parity/polkadot-omni-node:stable2512-3
+COPY --from=builder /build/chain_spec.json /chain/chain_spec.json
