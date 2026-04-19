@@ -556,16 +556,16 @@ pub mod pallet {
                     // Nativni token (PAS/DOT)
                     let stealth_balance = T::NativeBalance::balance(&stealth_account);
                     ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
-                    let transfer_amount: BalanceOf<T> = match amount {
-                        Some(n) => n.saturated_into(),
-                        None => stealth_balance,
+                    let (transfer_amount, preservation): (BalanceOf<T>, Preservation) = match amount {
+                        Some(n) => (n.saturated_into(), Preservation::Preserve),
+                        None => (stealth_balance, Preservation::Expendable),
                     };
                     ensure!(transfer_amount <= stealth_balance, Error::<T>::ZeroAmount);
                     T::NativeBalance::transfer(
                         &stealth_account,
                         &destination,
                         transfer_amount,
-                        Preservation::Preserve,
+                        preservation,
                     )?;
                 }
                 Some(ref id) => {
@@ -576,9 +576,9 @@ pub mod pallet {
                             &stealth_account,
                         );
                     ensure!(asset_balance > 0u32.into(), Error::<T>::ZeroAmount);
-                    let transfer_amount: AssetBalanceOf<T> = match amount {
-                        Some(n) => n.saturated_into(),
-                        None => asset_balance,
+                    let (transfer_amount, preservation): (AssetBalanceOf<T>, Preservation) = match amount {
+                        Some(n) => (n.saturated_into(), Preservation::Preserve),
+                        None => (asset_balance, Preservation::Expendable),
                     };
                     ensure!(transfer_amount <= asset_balance, Error::<T>::ZeroAmount);
                     <T::Assets as FungiblesMutate<T::AccountId>>::transfer(
@@ -586,7 +586,7 @@ pub mod pallet {
                         &stealth_account,
                         &destination,
                         transfer_amount,
-                        Preservation::Preserve,
+                        preservation,
                     )?;
                 }
             }
