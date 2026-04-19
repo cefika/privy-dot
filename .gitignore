@@ -2,13 +2,15 @@
 /target/
 blockchain/target/
 contracts/target/
-contracts/rust/target/
+contracts/stealth/target/
+contracts/usdc/target/
 cli/target/
 **/*.rs.bk
 
 # ── Node / Web ────────────────────────────────────────────────────────────────
 web/node_modules/
 web/dist/
+web/.vite/
 web/.env
 web/.env.local
 web/.env.devnet
@@ -45,10 +47,10 @@ docker/chain_spec*.json
 core/curvy-core.wasm
 
 # ── Hardhat / contract build artifacts ───────────────────────────────────────
-contracts/rust/artifacts/
-contracts/rust/cache/
-contracts/rust/node_modules/
-contracts/rust/package-lock.json
+contracts/stealth/artifacts/
+contracts/stealth/cache/
+contracts/stealth/node_modules/
+contracts/stealth/package-lock.json
 
 # ── Node / npm ────────────────────────────────────────────────────────────────
 node_modules/

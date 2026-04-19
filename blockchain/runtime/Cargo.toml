@@ -32,6 +32,7 @@ polkadot-sdk = { workspace = true, features = [
 	"cumulus-primitives-core",
 	"cumulus-primitives-utility",
 	"pallet-aura",
+	"pallet-assets",
 	"pallet-authorship",
 	"pallet-balances",
 	"pallet-collator-selection",

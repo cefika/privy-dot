@@ -9,7 +9,8 @@ use frame_support::{
 	dispatch::DispatchClass,
 	parameter_types,
 	traits::{
-		ConstBool, ConstU32, ConstU64, ConstU8, EitherOfDiverse, TransformOrigin, VariantCountOf,
+		ConstBool, ConstU32, ConstU64, ConstU8, ConstU128, EitherOfDiverse, TransformOrigin,
+		VariantCountOf,
 	},
 	weights::{ConstantMultiplier, Weight},
 	PalletId,
@@ -30,11 +31,11 @@ use xcm::latest::prelude::BodyId;
 
 use super::{
 	weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight},
-	AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash,
-	MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent,
-	RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys,
-	System, Timestamp, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS,
-	MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION,
+	AccountId, Assets, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection,
+	ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall,
+	RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session,
+	SessionKeys, System, Timestamp, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT,
+	HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION,
 };
 use xcm_config::{RelayLocation, XcmOriginToTransactDispatchOrigin};
 
@@ -291,6 +292,35 @@ impl pallet_template::Config for Runtime {
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
 }
 
+// ── pallet-assets (fungible assets: rSDC, USDC...) ───────────────────────
+
+impl pallet_assets::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Balance = Balance;
+	type RemoveItemsLimit = ConstU32<1_000>;
+	type AssetId = u32;
+	type AssetIdParameter = codec::Compact<u32>;
+	type Currency = Balances;
+	type CreateOrigin = frame_support::traits::AsEnsureOriginWithArg<
+		frame_system::EnsureSigned<AccountId>,
+	>;
+	type ForceOrigin = EnsureRoot<AccountId>;
+	type AssetDeposit = ExistentialDeposit;
+	type AssetAccountDeposit = ExistentialDeposit;
+	type MetadataDepositBase = ExistentialDeposit;
+	type MetadataDepositPerByte = ConstU128<10>;
+	type ApprovalDeposit = ExistentialDeposit;
+	type StringLimit = ConstU32<50>;
+	type Freezer = ();
+	type Extra = ();
+	type CallbackHandle = ();
+	type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
+	type ReserveData = ();
+	type Holder = ();
+	#[cfg(feature = "runtime-benchmarks")]
+	type BenchmarkHelper = ();
+}
+
 // ── pallet-stealth-addresses (ECPDKSAP protokol) ──────────────────────
 
 parameter_types! {
@@ -313,6 +343,8 @@ impl pallet_stealth_addresses::Config for Runtime {
 	type WithdrawalFee = StealthWithdrawalFee;
 	type NativeBalance = Balances;
 	type RuntimeHoldReason = RuntimeHoldReason;
+	type AssetId = u32;
+	type Assets = Assets;
 	type XcmSender = xcm_config::XcmRouter;
 	type WeightInfo = ();
 }
