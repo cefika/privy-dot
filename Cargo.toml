@@ -4,7 +4,6 @@ members = [
 	"blockchain/runtime",
 	"blockchain/pallets/template",
 	"blockchain/pallets/stealth-addresses",
-	"cli",
 ]
 
 [workspace.package]

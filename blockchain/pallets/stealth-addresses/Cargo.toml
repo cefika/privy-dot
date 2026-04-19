@@ -14,10 +14,13 @@ codec = { features = ["derive"], workspace = true }
 frame = { workspace = true, features = ["experimental", "runtime"], default-features = false }
 scale-info = { features = ["derive"], workspace = true }
 polkadot-sdk = { workspace = true, features = ["staging-xcm"], default-features = false }
+sp-io = { workspace = true }
 
 [dev-dependencies]
 frame = { workspace = true, features = ["std", "experimental", "runtime"] }
 sp-io = { workspace = true, features = ["std"] }
+sp-core = { workspace = true }
+polkadot-sdk = { workspace = true, features = ["pallet-balances", "std"] }
 
 [features]
 default = ["std"]
@@ -26,6 +29,7 @@ std = [
     "frame/std",
     "scale-info/std",
     "polkadot-sdk/std",
+    "sp-io/std",
 ]
 runtime-benchmarks = [
     "frame/runtime-benchmarks",

@@ -39,7 +39,14 @@ pub mod pallet {
     use crate::weights::WeightInfo;
     use alloc::{vec, vec::Vec};
     use frame::prelude::*;
+    use frame::traits::fungible::{Inspect as FungibleInspect, Mutate as FungibleMutate, MutateHold};
+    use frame::traits::tokens::{Precision, Preservation};
     use polkadot_sdk::staging_xcm::prelude::*;
+
+    /// Tip bilansa izveden iz `NativeBalance` asociranog tipa u Config-u.
+    pub(crate) type BalanceOf<T> = <<T as Config>::NativeBalance as FungibleInspect<
+        <T as frame_system::Config>::AccountId,
+    >>::Balance;
 
     // =========================================================================
     // TIPOVI I STRUKTURE
@@ -96,6 +103,21 @@ pub mod pallet {
     }
 
     // =========================================================================
+    // HOLD REASON — razlog zaključavanja sredstava sponzora
+    // =========================================================================
+
+    /// Razlog zašto su sponzorova sredstva zaključana u Balances paletu.
+    ///
+    /// Runtime automatski kombinuje `HoldReason` enume svih paleta u
+    /// `RuntimeHoldReason` — isti mehanizam koji koriste `pallet_staking`,
+    /// `pallet_democracy` itd.
+    #[pallet::composite_enum]
+    pub enum HoldReason {
+        /// Sredstva zaključana kao depozit u gas sponsor pool-u.
+        SponsorPool,
+    }
+
+    // =========================================================================
     // KONFIGURACIJA PALETA
     // =========================================================================
 
@@ -103,7 +125,6 @@ pub mod pallet {
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
         /// Maksimalan broj objava po view tagu (globalno kroz ceo lanac).
-        /// Svakih 65536 objava prosečno jedna dobija isti tag, pa je 65535 prag od ~4 mlrd objava.
         #[pallet::constant]
         type MaxAnnouncementsPerViewTag: Get<u32>;
 
@@ -111,15 +132,30 @@ pub mod pallet {
         #[pallet::constant]
         type MaxDelegationsPerUser: Get<u32>;
 
-        /// Minimalan depozit za sponzorstvo gasa (u planck-ovima nativnog tokena).
+        /// Minimalan depozit za gas sponzorstvo (u planck-ovima).
         #[pallet::constant]
         type MinSponsorDeposit: Get<u128>;
 
+        /// Naknada koja se oslobađa sponzoru i prosleđuje relayeru pri svakom
+        /// povlačenju sa stealth adrese (u planck-ovima).
+        #[pallet::constant]
+        type WithdrawalFee: Get<u128>;
+
+        /// Interfejs ka nativnom tokenu — za zaključavanje i transfer sredstava.
+        ///
+        /// U runtimeu se postavlja na `Balances` (pallet_balances instancu).
+        /// Mora podržavati `hold`/`release` mehanizam za gas sponsor pool.
+        type NativeBalance: FungibleInspect<Self::AccountId>
+            + FungibleMutate<Self::AccountId>
+            + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>;
+
+        /// Runtime-nivo hold reason enum koji uključuje naš `HoldReason`.
+        type RuntimeHoldReason: From<HoldReason>;
+
         /// XCM sender — za slanje cross-chain poruka.
-        /// U runtimeu se postavlja na `XcmRouter`.
         type XcmSender: SendXcm;
 
-        /// Težine operacija
+        /// Težine operacija.
         type WeightInfo: WeightInfo;
     }
 
@@ -245,6 +281,17 @@ pub mod pallet {
             amount: u128,
             announcement_nonce: u64,
         },
+        /// Sredstva povučena sa stealth adrese uz gas sponzorstvo.
+        ///
+        /// Relayer je platio Substrate tx naknadu; sponzor mu je refundirao
+        /// `sponsor_fee` iz svog pool-a; destination dobija ceo stealth balans.
+        StealthWithdrawal {
+            stealth_address: T::AccountId,
+            destination: T::AccountId,
+            relayer: T::AccountId,
+            sponsor: T::AccountId,
+            sponsor_fee: u128,
+        },
     }
 
     // =========================================================================
@@ -269,6 +316,11 @@ pub mod pallet {
         XcmSendFailed,
         /// Iznos mora biti veći od nule.
         ZeroAmount,
+        /// ECDSA dokaz vlasništva nad stealth adresom nije validan.
+        ///
+        /// Može biti: loš potpis, recovery failure, ili recovered adresa
+        /// ne odgovara prosleđenoj stealth adresi.
+        InvalidProof,
     }
 
     // =========================================================================
@@ -357,9 +409,14 @@ pub mod pallet {
 
         /// Deponuj sredstva u gas sponsor pool.
         ///
-        /// Sponzori omogućavaju primaocu da povuče sredstva sa stealth adrese
-        /// bez posedovanja nativnog tokena za naknade.
-        /// TODO: implementirati stvarni transfer iz Balances paleta.
+        /// Sredstva **ostaju u sponzorovom nalogu** ali su zaključana pomoću
+        /// Balances `hold` mehanizma (`HoldReason::SponsorPool`). Ovo znači:
+        /// - Sponzor može videti zaključana sredstva u svom nalogu
+        /// - Sredstva se ne mogu potrošiti dok god su zaključana
+        /// - Palet ih oslobađa atomski pri svakom `withdraw_from_stealth` pozivu
+        ///
+        /// Prednost nad transferom na poseban pool nalog: nema `PalletId`,
+        /// nema `ExistentialDeposit` problema, jasna proveniencija sredstava.
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::sponsor_gas())]
         pub fn sponsor_gas(
@@ -368,17 +425,133 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            ensure!(
-                amount >= T::MinSponsorDeposit::get(),
-                Error::<T>::DepositBelowMinimum
-            );
+            ensure!(amount >= T::MinSponsorDeposit::get(), Error::<T>::DepositBelowMinimum);
 
-            // TODO: pallet_balances::transfer(&who, &PalletId::into_account(), amount)
+            // Konvertuj u BalanceOf<T> — saturated_into je bezbedan jer je
+            // BalanceOf<T> uvek AtLeast32BitUnsigned, a amount je u128.
+            let amount_balance: BalanceOf<T> = amount.saturated_into();
+
+            // Zaključaj sredstva u sponzorovom nalogu.
+            // Ako nema dovoljno slobodnih sredstava, Balances vraća grešku.
+            let hold_reason: T::RuntimeHoldReason = HoldReason::SponsorPool.into();
+            T::NativeBalance::hold(&hold_reason, &who, amount_balance)
+                .map_err(|_| Error::<T>::InsufficientSponsorFunds)?;
+
+            // Ažuriraj pool evidenciju (u128 za lakšu upotrebu u logici)
             GasSponsorPool::<T>::mutate(&who, |deposit| {
                 *deposit = deposit.saturating_add(amount);
             });
 
             Self::deposit_event(Event::GasSponsorDeposited { sponsor: who, amount });
+            Ok(())
+        }
+
+        /// Povuci sredstva sa stealth adrese uz gas sponzorstvo.
+        ///
+        /// Ovo je **permissionless** operacija — bilo ko (relayer, frontend) može
+        /// da pošalje ovu transakciju u ime korisnika. Korisnik samo treba da
+        /// potpiše poruku offline, koristeći privatni ključ stealth adrese.
+        ///
+        /// ## Tok
+        ///
+        /// 1. Stealth key holder potpiše offline: `keccak256("PrivyDot::withdraw:v1" ‖ stealth_addr ‖ destination_addr)`
+        /// 2. Relayer pošalje ovaj extrinsic (plaća Substrate tx naknadu iz svog naloga)
+        /// 3. Palet verifikuje ECDSA potpis:
+        ///    - Recover uncompressed pubkey (64B) iz potpisa
+        ///    - Kompresuje u 33B (0x02/0x03 prefiks + x koordinata)
+        ///    - `blake2_256(compressed)` mora biti jednako `stealth_address`
+        /// 4. Palet oslobađa `WithdrawalFee` iz sponzorovog hold-a → transfer sponzor → relayer
+        /// 5. Palet transferuje ceo stealth balans → destination
+        ///
+        /// ## Bezbednost
+        ///
+        /// - Replay zaštita: potpis uključuje destination; posle prvog izvršenja
+        ///   stealth balans je 0, pa drugi pokušaj pada na `ZeroAmount`.
+        /// - Sponzor može biti isti kao relayer (self-sponsorship).
+        /// - `v` bajt potpisa se normalizuje: prihvata i 0/1 i 27/28 (Ethereum format).
+        #[pallet::call_index(5)]
+        #[pallet::weight(T::WeightInfo::withdraw_from_stealth())]
+        pub fn withdraw_from_stealth(
+            origin: OriginFor<T>,
+            stealth_address: [u8; 32],
+            destination: T::AccountId,
+            sig: [u8; 65],
+            sponsor: T::AccountId,
+        ) -> DispatchResult {
+            let relayer = ensure_signed(origin)?;
+
+            // ── 1. Verifikuj ECDSA dokaz vlasništva ──────────────────────────
+
+            // Konstruiši poruku: prefiks ‖ stealth ‖ destination
+            let msg = Self::withdrawal_message(&stealth_address, &destination);
+            let msg_hash = sp_io::hashing::blake2_256(&msg);
+
+            // Normalizuj v bajt: Ethereum koristi 27/28, sp_io očekuje 0/1
+            let mut sig_norm = sig;
+            if sig_norm[64] >= 27 {
+                sig_norm[64] -= 27;
+            }
+
+            // Recover uncompressed pubkey (64B: x‖y bez 0x04 prefiksa)
+            let pk = sp_io::crypto::secp256k1_ecdsa_recover(&sig_norm, &msg_hash)
+                .map_err(|_| Error::<T>::InvalidProof)?;
+
+            // Kompresuj: 0x02 ako je y paran, 0x03 ako je neparan
+            let mut compressed = [0u8; 33];
+            compressed[0] = if pk[63] & 1 == 0 { 0x02 } else { 0x03 };
+            compressed[1..].copy_from_slice(&pk[..32]);
+
+            // Substrate stealth adresa = blake2_256(compressed_secp256k1_pubkey)
+            let recovered = sp_io::hashing::blake2_256(&compressed);
+            ensure!(recovered == stealth_address, Error::<T>::InvalidProof);
+
+            // ── 2. Pripremi fee i proveri sponzorov pool ──────────────────────
+
+            let fee = T::WithdrawalFee::get();
+            let sponsor_deposit = GasSponsorPool::<T>::get(&sponsor);
+            ensure!(sponsor_deposit >= fee, Error::<T>::InsufficientSponsorFunds);
+
+            let fee_balance: BalanceOf<T> = fee.saturated_into();
+
+            // ── 3. Decode stealth adrese i proveri balans ─────────────────────
+
+            let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
+                .map_err(|_| Error::<T>::InvalidProof)?;
+
+            let stealth_balance = T::NativeBalance::balance(&stealth_account);
+            ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
+
+            // ── 4. Oslobodi fee iz sponzorovog hold-a → relayer ───────────────
+
+            let hold_reason: T::RuntimeHoldReason = HoldReason::SponsorPool.into();
+
+            // Release: sponzorova zaključana sredstva postaju slobodna
+            T::NativeBalance::release(&hold_reason, &sponsor, fee_balance, Precision::Exact)?;
+
+            // Transfer: oslobođeni fee ide relayeru kao kompenzacija za gas
+            T::NativeBalance::transfer(&sponsor, &relayer, fee_balance, Preservation::Preserve)?;
+
+            // Ažuriraj pool evidenciju
+            GasSponsorPool::<T>::mutate(&sponsor, |d| *d = d.saturating_sub(fee));
+
+            // ── 5. Transfer celog stealth balansa na destination ──────────────
+
+            // Expendable: dozvoljavamo da stealth nalog ostane prazan (nema ED zaštite)
+            T::NativeBalance::transfer(
+                &stealth_account,
+                &destination,
+                stealth_balance,
+                Preservation::Expendable,
+            )?;
+
+            Self::deposit_event(Event::StealthWithdrawal {
+                stealth_address: stealth_account,
+                destination,
+                relayer,
+                sponsor,
+                sponsor_fee: fee,
+            });
+
             Ok(())
         }
 
@@ -513,6 +686,28 @@ pub mod pallet {
             });
 
             Ok(())
+        }
+    }
+
+    // =========================================================================
+    // INTERNI HELPERI
+    // =========================================================================
+
+    impl<T: Config> Pallet<T> {
+        /// Konstruiše poruku koju stealth key holder potpisuje za povlačenje.
+        ///
+        /// Format: `"PrivyDot::withdraw:v1" ‖ stealth_address[32] ‖ destination_encoded[32]`
+        ///
+        /// Destination je enkodovan kao 32-bajtni AccountId32 (SCALE encode).
+        /// Poruka se hešira keccak-256 pre verifikacije.
+        pub(crate) fn withdrawal_message(stealth: &[u8; 32], dest: &T::AccountId) -> Vec<u8> {
+            const PREFIX: &[u8] = b"PrivyDot::withdraw:v1";
+            let dest_bytes = dest.encode();
+            let mut msg = Vec::with_capacity(PREFIX.len() + 32 + dest_bytes.len());
+            msg.extend_from_slice(PREFIX);
+            msg.extend_from_slice(stealth);
+            msg.extend_from_slice(&dest_bytes);
+            msg
         }
     }
 
