@@ -38,17 +38,26 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-# [3] Build + Deploy contract
-ARTIFACT="$ROOT_DIR/contracts/rust/target/ecpdksap.release.polkavm"
-if [ ! -f "$ARTIFACT" ]; then
-    echo "[3a/4] Building Rust contract (first time, may take a few minutes)..."
-    cd "$ROOT_DIR/contracts/rust"
+# [3] Build + Deploy contracts
+STEALTH_ARTIFACT="$ROOT_DIR/contracts/stealth/target/ecpdksap.release.polkavm"
+USDC_ARTIFACT="$ROOT_DIR/contracts/usdc/target/usdc.release.polkavm"
+
+if [ ! -f "$STEALTH_ARTIFACT" ]; then
+    echo "[3a/4] Building stealth contract (first time, may take a few minutes)..."
+    cd "$ROOT_DIR/contracts/stealth"
     cargo build --release 2>&1 || true  # host compilation fails on Mac — that's expected
     cd "$ROOT_DIR"
 fi
 
-echo "[3/4] Deploying ECPDKSAP contract..."
-cd "$ROOT_DIR/contracts/rust"
+if [ ! -f "$USDC_ARTIFACT" ]; then
+    echo "[3b/4] Building USDC contract (first time, may take a few minutes)..."
+    cd "$ROOT_DIR/contracts/usdc"
+    cargo build --release 2>&1 || true
+    cd "$ROOT_DIR"
+fi
+
+echo "[3/4] Deploying contracts..."
+cd "$ROOT_DIR/contracts/stealth"
 npm install --silent
 npm run deploy:local
 cd "$ROOT_DIR"

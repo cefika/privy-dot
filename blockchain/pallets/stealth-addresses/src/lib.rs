@@ -40,11 +40,17 @@ pub mod pallet {
     use alloc::{vec, vec::Vec};
     use frame::prelude::*;
     use frame::traits::fungible::{Inspect as FungibleInspect, Mutate as FungibleMutate, MutateHold};
+    use frame::traits::fungibles::{self, Inspect as FungiblesInspect, Mutate as FungiblesMutate};
     use frame::traits::tokens::{Precision, Preservation};
     use polkadot_sdk::staging_xcm::prelude::*;
 
-    /// Tip bilansa izveden iz `NativeBalance` asociranog tipa u Config-u.
+    /// Tip bilansa nativnog tokena izveden iz `NativeBalance` asociranog tipa.
     pub(crate) type BalanceOf<T> = <<T as Config>::NativeBalance as FungibleInspect<
+        <T as frame_system::Config>::AccountId,
+    >>::Balance;
+
+    /// Tip bilansa pallet-assets tokena izveden iz `Assets` asociranog tipa.
+    pub(crate) type AssetBalanceOf<T> = <<T as Config>::Assets as fungibles::Inspect<
         <T as frame_system::Config>::AccountId,
     >>::Balance;
 
@@ -151,6 +157,17 @@ pub mod pallet {
 
         /// Runtime-nivo hold reason enum koji uključuje naš `HoldReason`.
         type RuntimeHoldReason: From<HoldReason>;
+
+        /// Identifikator asset-a u pallet-assets (u runtimeu je `u32`).
+        type AssetId: Member + Parameter + MaxEncodedLen + Clone;
+
+        /// Interfejs ka pallet-assets — za transfer ERC20-kompatibilnih tokena
+        /// (npr. USDC, rSDC) sa stealth adrese.
+        ///
+        /// Gas sponzorstvo uvek ide u nativnom tokenu (PAS/DOT);
+        /// ovaj tip pokriva samo transfer samog asset-a.
+        type Assets: fungibles::Inspect<Self::AccountId, AssetId = Self::AssetId>
+            + fungibles::Mutate<Self::AccountId>;
 
         /// XCM sender — za slanje cross-chain poruka.
         type XcmSender: SendXcm;
@@ -285,12 +302,15 @@ pub mod pallet {
         ///
         /// Relayer je platio Substrate tx naknadu; sponzor mu je refundirao
         /// `sponsor_fee` iz svog pool-a; destination dobija ceo stealth balans.
+        /// `asset_id = None` znači nativni token (PAS/DOT);
+        /// `asset_id = Some(id)` znači pallet-assets token (rSDC, USDC...).
         StealthWithdrawal {
             stealth_address: T::AccountId,
             destination: T::AccountId,
             relayer: T::AccountId,
             sponsor: T::AccountId,
             sponsor_fee: u128,
+            asset_id: Option<T::AssetId>,
         },
     }
 
@@ -465,10 +485,12 @@ pub mod pallet {
         ///
         /// ## Bezbednost
         ///
-        /// - Replay zaštita: potpis uključuje destination; posle prvog izvršenja
-        ///   stealth balans je 0, pa drugi pokušaj pada na `ZeroAmount`.
+        /// - Replay zaštita: potpis uključuje destination i asset_id; posle prvog
+        ///   izvršenja stealth balans je 0, pa drugi pokušaj pada na `ZeroAmount`.
         /// - Sponzor može biti isti kao relayer (self-sponsorship).
         /// - `v` bajt potpisa se normalizuje: prihvata i 0/1 i 27/28 (Ethereum format).
+        /// - `asset_id = None` → povlači nativni token (PAS/DOT).
+        /// - `asset_id = Some(id)` → povlači pallet-assets token (rSDC, USDC...).
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::withdraw_from_stealth())]
         pub fn withdraw_from_stealth(
@@ -477,13 +499,14 @@ pub mod pallet {
             destination: T::AccountId,
             sig: [u8; 65],
             sponsor: T::AccountId,
+            asset_id: Option<T::AssetId>,
         ) -> DispatchResult {
             let relayer = ensure_signed(origin)?;
 
             // ── 1. Verifikuj ECDSA dokaz vlasništva ──────────────────────────
 
-            // Konstruiši poruku: prefiks ‖ stealth ‖ destination
-            let msg = Self::withdrawal_message(&stealth_address, &destination);
+            // Poruka uključuje asset_id da spreči reupotrebu potpisa između različitih tokena
+            let msg = Self::withdrawal_message(&stealth_address, &destination, &asset_id);
             let msg_hash = sp_io::hashing::blake2_256(&msg);
 
             // Normalizuj v bajt: Ethereum koristi 27/28, sp_io očekuje 0/1
@@ -513,36 +536,49 @@ pub mod pallet {
 
             let fee_balance: BalanceOf<T> = fee.saturated_into();
 
-            // ── 3. Decode stealth adrese i proveri balans ─────────────────────
+            // ── 3. Decode stealth adrese ──────────────────────────────────────
 
             let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
                 .map_err(|_| Error::<T>::InvalidProof)?;
 
-            let stealth_balance = T::NativeBalance::balance(&stealth_account);
-            ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
-
             // ── 4. Oslobodi fee iz sponzorovog hold-a → relayer ───────────────
 
             let hold_reason: T::RuntimeHoldReason = HoldReason::SponsorPool.into();
-
-            // Release: sponzorova zaključana sredstva postaju slobodna
             T::NativeBalance::release(&hold_reason, &sponsor, fee_balance, Precision::Exact)?;
-
-            // Transfer: oslobođeni fee ide relayeru kao kompenzacija za gas
             T::NativeBalance::transfer(&sponsor, &relayer, fee_balance, Preservation::Preserve)?;
-
-            // Ažuriraj pool evidenciju
             GasSponsorPool::<T>::mutate(&sponsor, |d| *d = d.saturating_sub(fee));
 
-            // ── 5. Transfer celog stealth balansa na destination ──────────────
+            // ── 5. Transfer stealth balansa na destination ────────────────────
 
-            // Expendable: dozvoljavamo da stealth nalog ostane prazan (nema ED zaštite)
-            T::NativeBalance::transfer(
-                &stealth_account,
-                &destination,
-                stealth_balance,
-                Preservation::Expendable,
-            )?;
+            match asset_id.clone() {
+                None => {
+                    // Nativni token (PAS/DOT)
+                    let stealth_balance = T::NativeBalance::balance(&stealth_account);
+                    ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
+                    T::NativeBalance::transfer(
+                        &stealth_account,
+                        &destination,
+                        stealth_balance,
+                        Preservation::Expendable,
+                    )?;
+                }
+                Some(ref id) => {
+                    // pallet-assets token (rSDC, USDC...)
+                    let asset_balance: AssetBalanceOf<T> =
+                        <T::Assets as FungiblesInspect<T::AccountId>>::balance(
+                            id.clone(),
+                            &stealth_account,
+                        );
+                    ensure!(asset_balance > 0u32.into(), Error::<T>::ZeroAmount);
+                    <T::Assets as FungiblesMutate<T::AccountId>>::transfer(
+                        id.clone(),
+                        &stealth_account,
+                        &destination,
+                        asset_balance,
+                        Preservation::Expendable,
+                    )?;
+                }
+            }
 
             Self::deposit_event(Event::StealthWithdrawal {
                 stealth_address: stealth_account,
@@ -550,6 +586,7 @@ pub mod pallet {
                 relayer,
                 sponsor,
                 sponsor_fee: fee,
+                asset_id,
             });
 
             Ok(())
@@ -696,17 +733,24 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Konstruiše poruku koju stealth key holder potpisuje za povlačenje.
         ///
-        /// Format: `"PrivyDot::withdraw:v1" ‖ stealth_address[32] ‖ destination_encoded[32]`
+        /// Format: `"PrivyDot::withdraw:v1" ‖ stealth[32] ‖ dest_encoded ‖ asset_id_encoded`
         ///
-        /// Destination je enkodovan kao 32-bajtni AccountId32 (SCALE encode).
-        /// Poruka se hešira keccak-256 pre verifikacije.
-        pub(crate) fn withdrawal_message(stealth: &[u8; 32], dest: &T::AccountId) -> Vec<u8> {
+        /// `asset_id = None` → nativni token; `Some(id)` → pallet-assets token.
+        /// Uključivanje asset_id sprečava reupotrebu istog potpisa za različite tokene.
+        pub(crate) fn withdrawal_message(
+            stealth: &[u8; 32],
+            dest: &T::AccountId,
+            asset_id: &Option<T::AssetId>,
+        ) -> Vec<u8> {
             const PREFIX: &[u8] = b"PrivyDot::withdraw:v1";
             let dest_bytes = dest.encode();
-            let mut msg = Vec::with_capacity(PREFIX.len() + 32 + dest_bytes.len());
+            let asset_bytes = asset_id.encode();
+            let mut msg =
+                Vec::with_capacity(PREFIX.len() + 32 + dest_bytes.len() + asset_bytes.len());
             msg.extend_from_slice(PREFIX);
             msg.extend_from_slice(stealth);
             msg.extend_from_slice(&dest_bytes);
+            msg.extend_from_slice(&asset_bytes);
             msg
         }
     }

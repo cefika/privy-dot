@@ -38,7 +38,7 @@ Stealth address protocol implementation on Polkadot (pallet-revive / PolkaVM).
 
 ## Contract: ECPDKSAP v2
 
-**Location**: `contracts/rust-v2/`
+**Location**: `contracts/stealth-v2/`
 
 ### Why v2 (pvm-contract-macros)?
 
@@ -63,7 +63,7 @@ v1 is smaller; v2 is easier to maintain. For production, v1 size matters on Pase
 ### Build
 
 ```bash
-cd contracts/rust
+cd contracts/stealth
 cargo build --release
 # Note: host (x86_64-mac) compilation will fail with HostFnImpl errors — that's expected.
 # The .polkavm artifact is produced by build.rs before the host compile step.
@@ -73,7 +73,7 @@ cargo build --release
 ### Deploy
 
 ```bash
-cd contracts/rust
+cd contracts/stealth
 npm install
 npm run deploy:local      # local node at 127.0.0.1:8545
 npm run deploy:testnet    # Paseo Asset Hub (needs PRIVATE_KEY in hardhat vars)

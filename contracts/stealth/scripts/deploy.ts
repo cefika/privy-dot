@@ -21,7 +21,7 @@ export const contractAddress: string | null = "${address}";
 async function main() {
 	if (!fs.existsSync(POLKAVM_ARTIFACT)) {
 		throw new Error(
-			`${POLKAVM_ARTIFACT} not found.\nRun: cd contracts/rust && cargo build --release`,
+			`${POLKAVM_ARTIFACT} not found.\nRun: cd contracts/stealth && cargo build --release`,
 		);
 	}
 

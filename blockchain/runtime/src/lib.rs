@@ -255,6 +255,9 @@ mod runtime {
 	#[runtime::pallet_index(51)]
 	pub type StealthAddresses = pallet_stealth_addresses;
 
+	#[runtime::pallet_index(52)]
+	pub type Assets = pallet_assets;
+
 	// Smart contracts (EVM + PVM via pallet-revive)
 	#[runtime::pallet_index(90)]
 	pub type Revive = pallet_revive;
