@@ -329,8 +329,8 @@ parameter_types! {
 	pub const MaxAnnouncementsPerViewTag: u32 = 10_000;
 	/// Maksimalan broj delegacija viewing key-a po korisniku.
 	pub const MaxDelegationsPerUser: u32 = 16;
-	/// Minimalni depozit za gas sponzorstvo: 1 DOT = 10^12 planck-ova.
-	pub const MinSponsorDeposit: u128 = 1_000_000_000_000;
+	/// Minimalni depozit za gas sponzorstvo: 0.01 PAS = 10^10 planck-ova.
+	pub const MinSponsorDeposit: u128 = 10_000_000_000;
 	/// Naknada relayeru pri povlačenju sa stealth adrese: 0.01 DOT.
 	/// Pokriva gas troškove relayera uz mali podsticaj za učešće u mreži.
 	pub const StealthWithdrawalFee: u128 = 10_000_000_000;

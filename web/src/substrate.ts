@@ -1,6 +1,6 @@
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
-import { blake2AsU8a } from "@polkadot/util-crypto";
+import { blake2AsU8a, decodeAddress } from "@polkadot/util-crypto";
 import { u8aToHex, hexToU8a } from "@polkadot/util";
 import type { KeyringPair } from "@polkadot/keyring/types";
 
@@ -230,6 +230,92 @@ export async function spendFromStealth(
   const pair = getStealthSpendingKeypair(spendingPrivKey);
   return submitTx(
     api.tx.balances.transferAllowDeath(to, amount.toString()),
+    pair
+  );
+}
+
+// ── Stealth pallet withdrawal ─────────────────────────────────────────────────
+
+// Build the message that the stealth pallet verifies:
+// PREFIX ++ stealth[32] ++ dest[32] ++ SCALE(Option<u32>)
+function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, assetId?: number): Uint8Array {
+  const prefix = new TextEncoder().encode("PrivyDot::withdraw:v1");
+  const stealth = hexToU8a(stealthHex); // 32 bytes
+
+  // SCALE-encode Option<u32>: 0x00 = None, 0x01 ++ u32_LE = Some
+  let assetBytes: Uint8Array;
+  if (assetId === undefined || assetId === null) {
+    assetBytes = new Uint8Array([0x00]);
+  } else {
+    assetBytes = new Uint8Array(5);
+    assetBytes[0] = 0x01;
+    new DataView(assetBytes.buffer).setUint32(1, assetId, true);
+  }
+
+  const msg = new Uint8Array(prefix.length + 32 + 32 + assetBytes.length);
+  let offset = 0;
+  msg.set(prefix, offset); offset += prefix.length;
+  msg.set(stealth, offset); offset += 32;
+  msg.set(destBytes, offset); offset += 32;
+  msg.set(assetBytes, offset);
+  return msg;
+}
+
+// Fetch pallet-assets balance for a given asset ID
+export async function getAssetBalance(api: ApiPromise, accountId: string, assetId: number): Promise<bigint> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const acc = await api.query.assets.account(assetId, accountId) as any;
+  if (!acc || acc.isNone) return 0n;
+  const inner = acc.isSome ? acc.unwrap() : acc;
+  return inner.balance?.toBigInt?.() ?? 0n;
+}
+
+// Deposit into gas sponsor pool (sponsor must call this before withdrawFromStealth can use them)
+export async function sponsorGas(
+  api: ApiPromise,
+  signer: KeyringPair,
+  amount: bigint
+): Promise<string> {
+  return submitTx(api.tx.stealthAddresses.sponsorGas(amount.toString()), signer);
+}
+
+// Query how much an account has in the gas sponsor pool
+export async function getSponsorBalance(api: ApiPromise, accountId: string): Promise<bigint> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const val = await api.query.stealthAddresses.gasSponsorPool(accountId) as any;
+  return val?.toBigInt?.() ?? 0n;
+}
+
+// Withdraw all native balance (or a specific asset) from a stealth address
+// using the stealthAddresses pallet extrinsic (ECDSA-signed, no direct key exposure).
+export async function withdrawFromStealth(
+  api: ApiPromise,
+  stealthAddress: string,   // AccountId32 hex (from scan results)
+  spendingPrivKey: string,  // ECDSA spending private key
+  destination: string,      // AccountId32 hex or SS58 of recipient
+  sponsor: string,          // AccountId with funds in GasSponsorPool
+  assetId?: number          // undefined = native DOT, number = pallet-assets asset
+): Promise<string> {
+  const pair = getStealthSpendingKeypair(spendingPrivKey);
+
+  // Decode destination to raw 32 bytes for the message (SCALE encoding of AccountId32 = raw bytes)
+  const destBytes = decodeAddress(destination);
+
+  // Build and sign the withdrawal message
+  const msg = buildWithdrawalMessage(stealthAddress, destBytes, assetId);
+  const sig = pair.sign(msg); // 65 bytes: r[32] + s[32] + v[1]
+
+  // Option<u32> for polkadot.js: null = None, number = Some(n)
+  const assetArg = assetId !== undefined && assetId !== null ? assetId : null;
+
+  return submitTx(
+    api.tx.stealthAddresses.withdrawFromStealth(
+      Array.from(hexToU8a(stealthAddress)), // stealth: [u8; 32]
+      destination,                            // destination: AccountId
+      Array.from(sig),                        // signature: [u8; 65]
+      sponsor,                                // sponsor: AccountId (must have pool funds)
+      assetArg                                // asset_id: Option<u32>
+    ),
     pair
   );
 }
