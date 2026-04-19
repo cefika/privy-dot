@@ -11,10 +11,11 @@ pub trait WeightInfo {
     fn sponsor_gas() -> Weight;
     fn delegate_viewing_key() -> Weight;
     fn send_stealth_xcm() -> Weight;
+    fn withdraw_from_stealth() -> Weight;
 }
 
 /// Placeholder implementacija — koristiti za development i testnet.
-/// Pre mainnet deploya pokrenuti benchmarke i zameniti ovim vrednostima.
+/// Pre mainnet deploya pokrenuti benchmarke i zameniti stvarnim vrednostima.
 impl WeightInfo for () {
     fn register_stealth_meta_address() -> Weight {
         Weight::from_parts(20_000_000, 4_096)
@@ -30,5 +31,9 @@ impl WeightInfo for () {
     }
     fn send_stealth_xcm() -> Weight {
         Weight::from_parts(100_000_000, 8_192)
+    }
+    fn withdraw_from_stealth() -> Weight {
+        // ECDSA recovery (~3ms) + 2x balance transfer + hold release
+        Weight::from_parts(200_000_000, 8_192)
     }
 }

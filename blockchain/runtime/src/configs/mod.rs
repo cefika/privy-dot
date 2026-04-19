@@ -301,12 +301,18 @@ parameter_types! {
 	pub const MaxDelegationsPerUser: u32 = 16;
 	/// Minimalni depozit za gas sponzorstvo: 1 DOT = 10^12 planck-ova.
 	pub const MinSponsorDeposit: u128 = 1_000_000_000_000;
+	/// Naknada relayeru pri povlačenju sa stealth adrese: 0.01 DOT.
+	/// Pokriva gas troškove relayera uz mali podsticaj za učešće u mreži.
+	pub const StealthWithdrawalFee: u128 = 10_000_000_000;
 }
 
 impl pallet_stealth_addresses::Config for Runtime {
 	type MaxAnnouncementsPerViewTag = MaxAnnouncementsPerViewTag;
 	type MaxDelegationsPerUser = MaxDelegationsPerUser;
 	type MinSponsorDeposit = MinSponsorDeposit;
+	type WithdrawalFee = StealthWithdrawalFee;
+	type NativeBalance = Balances;
+	type RuntimeHoldReason = RuntimeHoldReason;
 	type XcmSender = xcm_config::XcmRouter;
 	type WeightInfo = ();
 }
