@@ -11,6 +11,7 @@ import {
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
+  sendAssetFromStealth,
   withdrawFromStealth,
   sponsorGas,
   getSponsorBalance,
@@ -202,13 +203,24 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
         // Use the stealthAddresses pallet extrinsic (ECDSA-verified)
         const assetId = modal.assetId.trim() !== "" ? parseInt(modal.assetId, 10) : undefined;
+        let withdrawAmount: bigint | undefined;
+        if (modal.amount.trim() !== "") {
+          if (assetId !== undefined) {
+            // USDC: 6 decimals
+            withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+          } else {
+            // PAS: 12 decimals
+            withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+          }
+        }
         hash = await withdrawFromStealth(
           api,
           modal.addr.stealthAddress,
           modal.addr.spendingPrivKey,
           modal.to,
           subSigner.address,
-          assetId
+          assetId,
+          withdrawAmount
         );
       } else {
         // Direct balance transfer (signs tx with stealth keypair)
@@ -401,37 +413,59 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 <button onClick={() => setModal(null)} className="btn-primary w-full mt-4">Close</button>
               </div>
             ) : (
-              <div className="space-y-3">
-                {/* Mode toggle — only for XCM (pallet withdraw available) */}
+              <div className="space-y-4">
+
+                {/* Step 1: Token */}
                 {isXcm && (
-                  <div className="flex rounded-lg overflow-hidden border border-zinc-700 text-sm">
-                    <button
-                      onClick={() => setModal(m => m ? { ...m, useWithdraw: false } : m)}
-                      className={`flex-1 py-2 transition-colors ${!modal.useWithdraw ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
-                    >
-                      Direct Spend
-                    </button>
-                    <button
-                      onClick={() => setModal(m => m ? { ...m, useWithdraw: true } : m)}
-                      className={`flex-1 py-2 transition-colors ${modal.useWithdraw ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
-                    >
-                      Withdraw via Pallet
-                    </button>
+                  <div>
+                    <label className="label">1. Koji token šalješ?</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, assetId: "", useWithdraw: false } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.assetId === "" ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">PAS</div>
+                        <div className="text-xs text-zinc-500">{modal.addr.balance}</div>
+                      </button>
+                      {modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
+                        <button
+                          onClick={() => setModal(m => m ? { ...m, assetId: "1", useWithdraw: true } : m)}
+                          className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.assetId !== "" ? "border-blue-500 bg-blue-950/50 text-blue-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                        >
+                          <div className="font-semibold">USDC</div>
+                          <div className="text-xs text-zinc-500">{(Number(modal.addr.usdcBalance) / 1_000_000).toFixed(2)}</div>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                {isXcm && (
-                  <p className="text-xs text-zinc-500">
-                    {modal.useWithdraw
-                      ? "Uses stealthAddresses.withdrawFromStealth — ECDSA-signed, supports assets."
-                      : "Direct balances.transferAllowDeath — signs with stealth keypair."}
-                  </p>
+                {/* Step 2: Metod — samo za PAS */}
+                {isXcm && modal.assetId === "" && (
+                  <div>
+                    <label className="label">2. Kako šalješ?</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, useWithdraw: false } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${!modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">Direktno</div>
+                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                      </button>
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, useWithdraw: true } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">Pallet Withdraw</div>
+                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                      </button>
+                    </div>
+                  </div>
                 )}
 
+                {/* Step 3: Destination */}
                 <div>
-                  <label className="label">
-                    Destination {isXcm ? "AccountId32 (hex or SS58)" : "Address"}
-                  </label>
+                  <label className="label">{isXcm && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
                   <input
                     value={modal.to}
                     onChange={e => setModal(m => m ? { ...m, to: e.target.value } : m)}
@@ -440,40 +474,11 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                   />
                 </div>
 
-                {/* Asset selector — only for pallet withdraw */}
-                {isXcm && modal.useWithdraw && (
+                {/* Amount */}
+                {(!isXcm || !modal.useWithdraw) && modal.assetId === "" ? (
+                  /* Direct PAS — required */
                   <div>
-                    <label className="label">Asset</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setModal(m => m ? { ...m, assetId: "" } : m)}
-                        className={`px-3 py-1.5 rounded text-sm border transition-colors ${modal.assetId === "" ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
-                      >
-                        Native DOT
-                      </button>
-                      <button
-                        onClick={() => setModal(m => m ? { ...m, assetId: m.assetId || "1" } : m)}
-                        className={`px-3 py-1.5 rounded text-sm border transition-colors ${modal.assetId !== "" ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
-                      >
-                        USDC (asset)
-                      </button>
-                    </div>
-                    {modal.assetId !== "" && (
-                      <input
-                        type="number"
-                        value={modal.assetId}
-                        onChange={e => setModal(m => m ? { ...m, assetId: e.target.value } : m)}
-                        className="input mt-2"
-                        placeholder="Asset ID (e.g. 1)"
-                      />
-                    )}
-                  </div>
-                )}
-
-                {/* Amount — only for direct spend */}
-                {!modal.useWithdraw && (
-                  <div>
-                    <label className="label">Amount ({isXcm ? "tokens" : "PAS"})</label>
+                    <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
                     <input
                       type="number"
                       value={modal.amount}
@@ -482,22 +487,28 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       placeholder="0.0"
                     />
                   </div>
-                )}
+                ) : isXcm ? (
+                  /* Pallet PAS or Pallet USDC — optional (empty = ceo balans) */
+                  <div>
+                    <label className="label">{modal.assetId === "" ? "4." : "3."} Iznos ({modal.assetId !== "" ? "USDC" : "PAS"}) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <input
+                      type="number"
+                      value={modal.amount}
+                      onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
+                      className="input"
+                      placeholder={`max: ${modal.assetId !== "" ? (Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2) : modal.addr.balance}`}
+                    />
+                  </div>
+                ) : null}
 
-                {modal.useWithdraw && (
-                  <p className="text-xs text-zinc-500 bg-zinc-800 rounded p-2">
-                    Withdraws entire balance — amount is determined by the pallet automatically.
-                  </p>
-                )}
-
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-2">
                   <button
                     onClick={handleSpend}
-                    disabled={modal.loading || !modal.to || (!modal.useWithdraw && !modal.amount)}
+                    disabled={modal.loading || !modal.to || ((!isXcm || (!modal.useWithdraw && modal.assetId === "")) && !modal.amount)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2"
                   >
                     {modal.loading ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
-                    {modal.loading ? "Processing…" : modal.useWithdraw ? "Withdraw" : "Send"}
+                    {modal.loading ? "Processing…" : modal.useWithdraw ? `Withdraw ${modal.assetId !== "" ? "USDC" : "PAS"}` : "Send PAS"}
                   </button>
                   <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
                 </div>

@@ -236,10 +236,10 @@ export async function spendFromStealth(
 
 // ── Stealth pallet withdrawal ─────────────────────────────────────────────────
 
-// Build the message that the stealth pallet verifies:
-// PREFIX ++ stealth[32] ++ dest[32] ++ SCALE(Option<u32>)
-function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, assetId?: number): Uint8Array {
-  const prefix = new TextEncoder().encode("PrivyDot::withdraw:v1");
+// Build the message that the stealth pallet verifies (v2):
+// PREFIX ++ stealth[32] ++ dest[32] ++ SCALE(Option<u32>) ++ SCALE(Option<u128>)
+function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, assetId?: number, amount?: bigint): Uint8Array {
+  const prefix = new TextEncoder().encode("PrivyDot::withdraw:v2");
   const stealth = hexToU8a(stealthHex); // 32 bytes
 
   // SCALE-encode Option<u32>: 0x00 = None, 0x01 ++ u32_LE = Some
@@ -252,13 +252,41 @@ function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, asset
     new DataView(assetBytes.buffer).setUint32(1, assetId, true);
   }
 
-  const msg = new Uint8Array(prefix.length + 32 + 32 + assetBytes.length);
+  // SCALE-encode Option<u128>: 0x00 = None, 0x01 ++ u128_LE (16 bytes) = Some
+  let amountBytes: Uint8Array;
+  if (amount === undefined || amount === null) {
+    amountBytes = new Uint8Array([0x00]);
+  } else {
+    amountBytes = new Uint8Array(17);
+    amountBytes[0] = 0x01;
+    // Write u128 as 16 bytes little-endian
+    let v = amount;
+    for (let i = 0; i < 16; i++) {
+      amountBytes[1 + i] = Number(v & 0xffn);
+      v >>= 8n;
+    }
+  }
+
+  const msg = new Uint8Array(prefix.length + 32 + 32 + assetBytes.length + amountBytes.length);
   let offset = 0;
   msg.set(prefix, offset); offset += prefix.length;
   msg.set(stealth, offset); offset += 32;
   msg.set(destBytes, offset); offset += 32;
-  msg.set(assetBytes, offset);
+  msg.set(assetBytes, offset); offset += assetBytes.length;
+  msg.set(amountBytes, offset);
   return msg;
+}
+
+// Send a specific amount of a pallet-assets token directly from a stealth address
+export async function sendAssetFromStealth(
+  api: ApiPromise,
+  spendingPrivKey: string,
+  to: string,
+  assetId: number,
+  amount: bigint
+): Promise<string> {
+  const pair = getStealthSpendingKeypair(spendingPrivKey);
+  return submitTx(api.tx.assets.transfer(assetId, to, amount.toString()), pair);
 }
 
 // Fetch pallet-assets balance for a given asset ID
@@ -286,27 +314,30 @@ export async function getSponsorBalance(api: ApiPromise, accountId: string): Pro
   return val?.toBigInt?.() ?? 0n;
 }
 
-// Withdraw all native balance (or a specific asset) from a stealth address
-// using the stealthAddresses pallet extrinsic (ECDSA-signed, no direct key exposure).
+// Withdraw from a stealth address via the pallet (ECDSA-signed).
+// amount: undefined/null = entire balance; bigint = specific amount
 export async function withdrawFromStealth(
   api: ApiPromise,
   stealthAddress: string,   // AccountId32 hex (from scan results)
   spendingPrivKey: string,  // ECDSA spending private key
   destination: string,      // AccountId32 hex or SS58 of recipient
   sponsor: string,          // AccountId with funds in GasSponsorPool
-  assetId?: number          // undefined = native DOT, number = pallet-assets asset
+  assetId?: number,         // undefined = native PAS, number = pallet-assets asset
+  amount?: bigint           // undefined = entire balance, bigint = specific amount
 ): Promise<string> {
   const pair = getStealthSpendingKeypair(spendingPrivKey);
 
   // Decode destination to raw 32 bytes for the message (SCALE encoding of AccountId32 = raw bytes)
   const destBytes = decodeAddress(destination);
 
-  // Build and sign the withdrawal message
-  const msg = buildWithdrawalMessage(stealthAddress, destBytes, assetId);
+  // Build and sign the v2 withdrawal message (includes asset_id + amount)
+  const msg = buildWithdrawalMessage(stealthAddress, destBytes, assetId, amount);
   const sig = pair.sign(msg); // 65 bytes: r[32] + s[32] + v[1]
 
   // Option<u32> for polkadot.js: null = None, number = Some(n)
   const assetArg = assetId !== undefined && assetId !== null ? assetId : null;
+  // Option<u128> for polkadot.js: null = None, string = Some(n)
+  const amountArg = amount !== undefined && amount !== null ? amount.toString() : null;
 
   return submitTx(
     api.tx.stealthAddresses.withdrawFromStealth(
@@ -314,7 +345,8 @@ export async function withdrawFromStealth(
       destination,                            // destination: AccountId
       Array.from(sig),                        // signature: [u8; 65]
       sponsor,                                // sponsor: AccountId (must have pool funds)
-      assetArg                                // asset_id: Option<u32>
+      assetArg,                               // asset_id: Option<u32>
+      amountArg                               // amount: Option<u128>
     ),
     pair
   );

@@ -40,14 +40,16 @@ fn make_stealth_key(seed: u8) -> (ecdsa::Pair, [u8; 32], u64) {
 
 /// Gradi withdrawal poruku identično kao u paletu.
 /// `asset_id = None` → nativni token; `Some(id)` → pallet-assets token.
-fn build_withdrawal_msg(stealth: &[u8; 32], dest: u64, asset_id: Option<u32>) -> Vec<u8> {
+fn build_withdrawal_msg(stealth: &[u8; 32], dest: u64, asset_id: Option<u32>, amount: Option<u128>) -> Vec<u8> {
     let dest_encoded = dest.encode();
     let asset_bytes = asset_id.encode();
+    let amount_bytes = amount.encode();
     let mut msg = Vec::new();
-    msg.extend_from_slice(b"PrivyDot::withdraw:v1");
+    msg.extend_from_slice(b"PrivyDot::withdraw:v2");
     msg.extend_from_slice(stealth);
     msg.extend_from_slice(&dest_encoded);
     msg.extend_from_slice(&asset_bytes);
+    msg.extend_from_slice(&amount_bytes);
     msg
 }
 
@@ -284,7 +286,7 @@ fn withdraw_from_stealth_works() {
         ));
 
         // Potpiši withdrawal poruku secp256k1 ključem stealth adrese
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         let relayer_balance_before = Balances::free_balance(relayer);
@@ -296,6 +298,7 @@ fn withdraw_from_stealth_works() {
             destination,
             sig,
             sponsor,
+            None,
             None,
         ));
 
@@ -335,6 +338,7 @@ fn withdraw_from_stealth_invalid_signature_fails() {
                 bad_sig,
                 99u64,
                 None,
+                None,
             ),
             Error::<Test>::InvalidProof
         );
@@ -357,7 +361,7 @@ fn withdraw_from_stealth_wrong_key_fails() {
         ));
 
         // Potpisujemo sa POGREŠNIM ključem
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let bad_sig: [u8; 65] = other_pair.sign(&msg).0;
 
         assert_noop!(
@@ -367,6 +371,7 @@ fn withdraw_from_stealth_wrong_key_fails() {
                 100u64,
                 bad_sig,
                 99u64,
+                None,
                 None,
             ),
             Error::<Test>::InvalidProof
@@ -388,7 +393,7 @@ fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
         ));
 
         // Potpišemo za destination=100 ali prosleđujemo destination=999
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         assert_noop!(
@@ -398,6 +403,7 @@ fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
                 999u64, // ← ne odgovara potpisanom destination-u
                 sig,
                 99u64,
+                None,
                 None,
             ),
             Error::<Test>::InvalidProof
@@ -413,7 +419,7 @@ fn withdraw_from_stealth_insufficient_sponsor_funds_fails() {
         fund(stealth_id, 10_000_000_000);
 
         // Sponsor 99 nema nikakav depozit u pool-u
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         assert_noop!(
@@ -423,6 +429,7 @@ fn withdraw_from_stealth_insufficient_sponsor_funds_fails() {
                 100u64,
                 sig,
                 99u64, // sponsor bez pool balansa
+                None,
                 None,
             ),
             Error::<Test>::InsufficientSponsorFunds
@@ -444,7 +451,7 @@ fn withdraw_from_stealth_zero_balance_fails() {
         ));
 
         // Stealth adresa nema tokena
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         assert_noop!(
@@ -454,8 +461,9 @@ fn withdraw_from_stealth_zero_balance_fails() {
                 100u64,
                 sig,
                 99u64,
-            None,
-        ),
+                None,
+                None,
+            ),
             Error::<Test>::ZeroAmount
         );
     });
@@ -475,7 +483,7 @@ fn withdraw_from_stealth_replay_fails_after_first() {
             5_000_000_000u128,
         ));
 
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         // Prvi poziv uspeva
@@ -485,7 +493,8 @@ fn withdraw_from_stealth_replay_fails_after_first() {
             100u64,
             sig,
             99u64,
-        None,
+            None,
+            None,
         ));
 
         // Isti potpis, isti poziv — stealth balans je sad 0
@@ -496,8 +505,9 @@ fn withdraw_from_stealth_replay_fails_after_first() {
                 100u64,
                 sig,
                 99u64,
-            None,
-        ),
+                None,
+                None,
+            ),
             Error::<Test>::ZeroAmount
         );
     });
@@ -529,7 +539,7 @@ fn withdraw_asset_from_stealth_works() {
         // Kreiraj rSDC i mintuj na stealth adresu (stealth nema PAS)
         create_and_mint_asset(asset_id, sponsor, stealth_id, asset_amount);
 
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, Some(asset_id));
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, Some(asset_id), None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         let relayer_pas_before = Balances::free_balance(relayer);
@@ -541,6 +551,7 @@ fn withdraw_asset_from_stealth_works() {
             sig,
             sponsor,
             Some(asset_id),
+            None,
         ));
 
         // Destination dobio rSDC
@@ -570,7 +581,7 @@ fn withdraw_asset_wrong_asset_id_in_sig_fails() {
         ));
 
         // Potpisan za None, ali šaljemo Some(1)
-        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None);
+        let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
         assert_noop!(
@@ -581,6 +592,7 @@ fn withdraw_asset_wrong_asset_id_in_sig_fails() {
                 sig,
                 99u64,
                 Some(asset_id),
+                None,
             ),
             Error::<Test>::InvalidProof
         );
