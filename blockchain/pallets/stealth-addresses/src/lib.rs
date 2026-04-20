@@ -483,6 +483,139 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Delegiraj viewing key drugom nalogu za selektivno otkrivanje.
+        ///
+        /// Korisnik može dati poreskom inspektoru, računovođi ili regulatoru privremeni
+        /// pristup viewing key-u bez otkrivanja spending key-a ili drugih transakcija.
+        ///
+        /// Viewing key mora biti enkriptovan javnim ključem delegata pre poziva.
+        #[pallet::call_index(3)]
+        #[pallet::weight(T::WeightInfo::delegate_viewing_key())]
+        pub fn delegate_viewing_key(
+            origin: OriginFor<T>,
+            delegate: T::AccountId,
+            valid_from: BlockNumberFor<T>,
+            valid_until: Option<BlockNumberFor<T>>,
+            encrypted_viewing_key: [u8; 64],
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            ensure!(who != delegate, Error::<T>::CannotDelegateToSelf);
+
+            let delegation = ViewingKeyDelegation {
+                delegate: delegate.clone(),
+                valid_from,
+                valid_until,
+                encrypted_viewing_key,
+            };
+
+            ViewingKeyDelegations::<T>::try_mutate(&who, |delegations| {
+                delegations.try_push(delegation).map_err(|_| Error::<T>::TooManyDelegations)
+            })?;
+
+            Self::deposit_event(Event::ViewingKeyDelegated { owner: who, delegate, valid_until });
+            Ok(())
+        }
+
+        /// Pošalji nativni token na stealth adresu na drugom parachain-u.
+        ///
+        /// Atomski radi dve stvari:
+        /// 1. Šalje XCM teleport poruku — tokeni stižu direktno na stealth adresu
+        /// 2. Upisuje announcement lokalno — primalac skenira ovaj lanac
+        ///
+        /// Primalac na dest parachain-u prima tokene, a objavu pronalazi
+        /// skeniranjem ViewTagIndex na OVOM parachain-u.
+        ///
+        /// Parametri:
+        /// - `dest_para_id`    : ID odredišnog parachain-a (npr. 1000 za Asset Hub)
+        /// - `stealth_address` : 32-bajtna adresa na odredištu (AccountId32)
+        /// - `amount`          : iznos u planck-ovima nativnog tokena
+        /// - `ephemeral_pubkey`: R = r × G₁ (BN254, 64 bajta)
+        /// - `view_tag`        : prva 2 bajta od hash(r × V)
+        /// - `metadata`        : opcionalni metapodaci (32 bajta)
+        #[pallet::call_index(4)]
+        #[pallet::weight(T::WeightInfo::send_stealth_xcm())]
+        pub fn send_stealth_xcm(
+            origin: OriginFor<T>,
+            dest_para_id: u32,
+            stealth_address: [u8; 32],
+            amount: u128,
+            ephemeral_pubkey: [u8; 64],
+            view_tag: [u8; 2],
+            metadata: [u8; 32],
+        ) -> DispatchResult {
+            let _who = ensure_signed(origin)?;
+
+            ensure!(amount > 0, Error::<T>::ZeroAmount);
+
+            // ── 1. Konstruiši XCM poruku ──────────────────────────────────────
+            let dest: Location = Location::new(1, [Junction::Parachain(dest_para_id)]);
+
+            let beneficiary: Location = Location::new(
+                0,
+                [Junction::AccountId32 { network: None, id: stealth_address }],
+            );
+
+            let asset = Asset {
+                id: AssetId(Location::parent()),
+                fun: Fungible(amount),
+            };
+
+            // Teleport: pošiljaoc para → relay → dest para
+            // Destination chain prima `ReceiveTeleportedAsset` i deponuje na stealth adresu.
+            let xcm: Xcm<()> = Xcm(vec![
+                ReceiveTeleportedAsset(vec![asset.clone()].into()),
+                ClearOrigin,
+                BuyExecution {
+                    fees: asset,
+                    weight_limit: WeightLimit::Unlimited,
+                },
+                DepositAsset {
+                    assets: Wild(AllCounted(1)),
+                    beneficiary,
+                },
+            ]);
+
+            // Validuj i pošalji
+            let (ticket, _) = T::XcmSender::validate(
+                &mut Some(dest),
+                &mut Some(xcm),
+            ).map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            T::XcmSender::deliver(ticket)
+                .map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            // ── 2. Upiši announcement lokalno ─────────────────────────────────
+            // Primalac skenira ViewTagIndex na ovom lancu da pronađe svoju uplatu.
+            let nonce = AnnouncementNonce::<T>::get();
+
+            let stealth_account = T::AccountId::decode(
+                &mut stealth_address.as_ref()
+            ).map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            Announcements::<T>::insert(nonce, Announcement {
+                ephemeral_pubkey,
+                view_tag,
+                stealth_address: stealth_account,
+                metadata,
+            });
+
+            ViewTagIndex::<T>::try_mutate(view_tag, |nonces| {
+                nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
+            })?;
+
+            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
+
+            Self::deposit_event(Event::StealthXcmSent {
+                dest_para_id,
+                stealth_address,
+                amount,
+                announcement_nonce: nonce,
+            });
+
+            Ok(())
+        }
+
         /// Povuci sredstva sa stealth adrese uz gas sponzorstvo.
         ///
         /// Ovo je **permissionless** operacija — bilo ko (relayer, frontend) može
@@ -615,139 +748,6 @@ pub mod pallet {
                 sponsor,
                 sponsor_fee: fee,
                 asset_id,
-            });
-
-            Ok(())
-        }
-
-        /// Delegiraj viewing key drugom nalogu za selektivno otkrivanje.
-        ///
-        /// Korisnik može dati poreskom inspektoru, računovođi ili regulatoru privremeni
-        /// pristup viewing key-u bez otkrivanja spending key-a ili drugih transakcija.
-        ///
-        /// Viewing key mora biti enkriptovan javnim ključem delegata pre poziva.
-        #[pallet::call_index(3)]
-        #[pallet::weight(T::WeightInfo::delegate_viewing_key())]
-        pub fn delegate_viewing_key(
-            origin: OriginFor<T>,
-            delegate: T::AccountId,
-            valid_from: BlockNumberFor<T>,
-            valid_until: Option<BlockNumberFor<T>>,
-            encrypted_viewing_key: [u8; 64],
-        ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            ensure!(who != delegate, Error::<T>::CannotDelegateToSelf);
-
-            let delegation = ViewingKeyDelegation {
-                delegate: delegate.clone(),
-                valid_from,
-                valid_until,
-                encrypted_viewing_key,
-            };
-
-            ViewingKeyDelegations::<T>::try_mutate(&who, |delegations| {
-                delegations.try_push(delegation).map_err(|_| Error::<T>::TooManyDelegations)
-            })?;
-
-            Self::deposit_event(Event::ViewingKeyDelegated { owner: who, delegate, valid_until });
-            Ok(())
-        }
-
-        /// Pošalji nativni token na stealth adresu na drugom parachain-u.
-        ///
-        /// Atomski radi dve stvari:
-        /// 1. Šalje XCM teleport poruku — tokeni stižu direktno na stealth adresu
-        /// 2. Upisuje announcement lokalno — primalac skenira ovaj lanac
-        ///
-        /// Primalac na dest parachain-u prima tokene, a objavu pronalazi
-        /// skeniranjem ViewTagIndex na OVOM parachain-u.
-        ///
-        /// Parametri:
-        /// - `dest_para_id`    : ID odredišnog parachain-a (npr. 1000 za Asset Hub)
-        /// - `stealth_address` : 32-bajtna adresa na odredištu (AccountId32)
-        /// - `amount`          : iznos u planck-ovima nativnog tokena
-        /// - `ephemeral_pubkey`: R = r × G₁ (BN254, 64 bajta)
-        /// - `view_tag`        : prva 2 bajta od hash(r × V)
-        /// - `metadata`        : opcionalni metapodaci (32 bajta)
-        #[pallet::call_index(4)]
-        #[pallet::weight(T::WeightInfo::send_stealth_xcm())]
-        pub fn send_stealth_xcm(
-            origin: OriginFor<T>,
-            dest_para_id: u32,
-            stealth_address: [u8; 32],
-            amount: u128,
-            ephemeral_pubkey: [u8; 64],
-            view_tag: [u8; 2],
-            metadata: [u8; 32],
-        ) -> DispatchResult {
-            let _who = ensure_signed(origin)?;
-
-            ensure!(amount > 0, Error::<T>::ZeroAmount);
-
-            // ── 1. Konstruiši XCM poruku ──────────────────────────────────────
-            let dest: Location = Location::new(1, [Junction::Parachain(dest_para_id)]);
-
-            let beneficiary: Location = Location::new(
-                0,
-                [Junction::AccountId32 { network: None, id: stealth_address }],
-            );
-
-            let asset = Asset {
-                id: AssetId(Location::parent()),
-                fun: Fungible(amount),
-            };
-
-            // Teleport: pošiljaoc para → relay → dest para
-            // Destination chain prima `ReceiveTeleportedAsset` i deponuje na stealth adresu.
-            let xcm: Xcm<()> = Xcm(vec![
-                ReceiveTeleportedAsset(vec![asset.clone()].into()),
-                ClearOrigin,
-                BuyExecution {
-                    fees: asset,
-                    weight_limit: WeightLimit::Unlimited,
-                },
-                DepositAsset {
-                    assets: Wild(AllCounted(1)),
-                    beneficiary,
-                },
-            ]);
-
-            // Validuj i pošalji
-            let (ticket, _) = T::XcmSender::validate(
-                &mut Some(dest),
-                &mut Some(xcm),
-            ).map_err(|_| Error::<T>::XcmSendFailed)?;
-
-            T::XcmSender::deliver(ticket)
-                .map_err(|_| Error::<T>::XcmSendFailed)?;
-
-            // ── 2. Upiši announcement lokalno ─────────────────────────────────
-            // Primalac skenira ViewTagIndex na ovom lancu da pronađe svoju uplatu.
-            let nonce = AnnouncementNonce::<T>::get();
-
-            let stealth_account = T::AccountId::decode(
-                &mut stealth_address.as_ref()
-            ).map_err(|_| Error::<T>::XcmSendFailed)?;
-
-            Announcements::<T>::insert(nonce, Announcement {
-                ephemeral_pubkey,
-                view_tag,
-                stealth_address: stealth_account,
-                metadata,
-            });
-
-            ViewTagIndex::<T>::try_mutate(view_tag, |nonces| {
-                nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
-            })?;
-
-            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
-
-            Self::deposit_event(Event::StealthXcmSent {
-                dest_para_id,
-                stealth_address,
-                amount,
-                announcement_nonce: nonce,
             });
 
             Ok(())
