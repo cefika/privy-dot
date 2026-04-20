@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
-import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
+import { configure, connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
+import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
@@ -133,7 +133,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, destPara, wasmReady]);
 
-  // Auto-register meta address kad su keys + subSigner dostupni
+  // Auto-register meta address kad su keys + subSigner dostupni (Substrate)
   useEffect(() => {
     if (!subSigner || !keys || !wasmReady) return;
     let cancelled = false;
@@ -153,6 +153,23 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, wasmReady]);
+
+  // Auto-register meta address via EVM precompile kad su keys + MetaMask signer dostupni
+  useEffect(() => {
+    if (!signer || !keys || !wasmReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const spBytes = secp256k1ToCompressed(keys.K);
+        const vpBytes = bn254ToBytes64(keys.V);
+        const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
+        if (!cancelled) addToast(`Meta address registered via precompile (${hash.slice(0, 10)}…)`, "success");
+      } catch (e: unknown) {
+        if (!cancelled) addToast(e instanceof Error ? e.message : "Precompile registration failed", "error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [signer, keys, wasmReady]);
 
   useEffect(() => {
     setSubPas(null); setSubUsdc(null);

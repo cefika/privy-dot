@@ -13,9 +13,12 @@ ALICE_PUBKEY="0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
 # Charlie sr25519 public key (za para 2000 — invulnerable u genezi)
 CHARLIE_PUBKEY="0x90b5ab205c6974c9ea841be688864633dc9ca8a357843eeacf2314649965fe22"
 
+ETH_RPC_PID=""
+
 cleanup() {
     echo ""
     echo "Gašenje..."
+    [ -n "$ETH_RPC_PID" ] && kill "$ETH_RPC_PID" 2>/dev/null || true
     kill "$ZOMBIENET_PID" 2>/dev/null || true
     wait "$ZOMBIENET_PID" 2>/dev/null || true
 }
@@ -80,11 +83,23 @@ echo ""
 insert_aura_key "$PARA_1000_RPC" "//Alice" "$ALICE_PUBKEY" "Alice"
 insert_aura_key "$PARA_2000_RPC" "//Charlie" "$CHARLIE_PUBKEY" "Charlie"
 
+# Pokreni eth-rpc proxy za Para 1000
+echo ""
+echo -n "Pokrećem eth-rpc proxy na http://127.0.0.1:8545..."
+eth-rpc \
+    --node-rpc-url ws://127.0.0.1:9944 \
+    --rpc-port 8545 \
+    --chain "$SCRIPT_DIR/chain_spec.json" \
+    > /tmp/eth-rpc.log 2>&1 &
+ETH_RPC_PID=$!
+echo " PID: $ETH_RPC_PID"
+
 echo ""
 echo "=== Mreža je sprema ==="
 echo "  Relay chain (alice):  ws://127.0.0.1:9950"
 echo "  Para 1000  (alice):   ws://127.0.0.1:9944"
 echo "  Para 2000  (charlie): ws://127.0.0.1:9935"
+echo "  ETH RPC    (proxy):   http://127.0.0.1:8545"
 echo ""
 echo "Pritisni Ctrl+C za zaustavljanje."
 

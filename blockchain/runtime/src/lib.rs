@@ -8,6 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 mod benchmarks;
 pub mod configs;
 mod genesis_config_presets;
+pub mod stealth_precompile;
 #[cfg(test)]
 mod tests;
 mod weights;
