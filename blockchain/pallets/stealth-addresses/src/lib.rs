@@ -500,13 +500,14 @@ pub mod pallet {
             sig: [u8; 65],
             sponsor: T::AccountId,
             asset_id: Option<T::AssetId>,
+            amount: Option<u128>, // None = ceo balans, Some(n) = tačan iznos
         ) -> DispatchResult {
             let relayer = ensure_signed(origin)?;
 
             // ── 1. Verifikuj ECDSA dokaz vlasništva ──────────────────────────
 
-            // Poruka uključuje asset_id da spreči reupotrebu potpisa između različitih tokena
-            let msg = Self::withdrawal_message(&stealth_address, &destination, &asset_id);
+            // Poruka uključuje asset_id i amount da spreči reupotrebu potpisa
+            let msg = Self::withdrawal_message(&stealth_address, &destination, &asset_id, &amount);
             let msg_hash = sp_io::hashing::blake2_256(&msg);
 
             // Normalizuj v bajt: Ethereum koristi 27/28, sp_io očekuje 0/1
@@ -555,11 +556,16 @@ pub mod pallet {
                     // Nativni token (PAS/DOT)
                     let stealth_balance = T::NativeBalance::balance(&stealth_account);
                     ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
+                    let (transfer_amount, preservation): (BalanceOf<T>, Preservation) = match amount {
+                        Some(n) => (n.saturated_into(), Preservation::Preserve),
+                        None => (stealth_balance, Preservation::Expendable),
+                    };
+                    ensure!(transfer_amount <= stealth_balance, Error::<T>::ZeroAmount);
                     T::NativeBalance::transfer(
                         &stealth_account,
                         &destination,
-                        stealth_balance,
-                        Preservation::Expendable,
+                        transfer_amount,
+                        preservation,
                     )?;
                 }
                 Some(ref id) => {
@@ -570,12 +576,17 @@ pub mod pallet {
                             &stealth_account,
                         );
                     ensure!(asset_balance > 0u32.into(), Error::<T>::ZeroAmount);
+                    let (transfer_amount, preservation): (AssetBalanceOf<T>, Preservation) = match amount {
+                        Some(n) => (n.saturated_into(), Preservation::Preserve),
+                        None => (asset_balance, Preservation::Expendable),
+                    };
+                    ensure!(transfer_amount <= asset_balance, Error::<T>::ZeroAmount);
                     <T::Assets as FungiblesMutate<T::AccountId>>::transfer(
                         id.clone(),
                         &stealth_account,
                         &destination,
-                        asset_balance,
-                        Preservation::Expendable,
+                        transfer_amount,
+                        preservation,
                     )?;
                 }
             }
@@ -733,24 +744,29 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Konstruiše poruku koju stealth key holder potpisuje za povlačenje.
         ///
-        /// Format: `"PrivyDot::withdraw:v1" ‖ stealth[32] ‖ dest_encoded ‖ asset_id_encoded`
+        /// Format: `"PrivyDot::withdraw:v2" ‖ stealth[32] ‖ dest_encoded ‖ asset_id_encoded ‖ amount_encoded`
         ///
         /// `asset_id = None` → nativni token; `Some(id)` → pallet-assets token.
-        /// Uključivanje asset_id sprečava reupotrebu istog potpisa za različite tokene.
+        /// `amount = None` → ceo balans; `Some(n)` → tačan iznos.
+        /// Uključivanje asset_id i amount sprečava reupotrebu potpisa.
         pub(crate) fn withdrawal_message(
             stealth: &[u8; 32],
             dest: &T::AccountId,
             asset_id: &Option<T::AssetId>,
+            amount: &Option<u128>,
         ) -> Vec<u8> {
-            const PREFIX: &[u8] = b"PrivyDot::withdraw:v1";
+            const PREFIX: &[u8] = b"PrivyDot::withdraw:v2";
             let dest_bytes = dest.encode();
             let asset_bytes = asset_id.encode();
-            let mut msg =
-                Vec::with_capacity(PREFIX.len() + 32 + dest_bytes.len() + asset_bytes.len());
+            let amount_bytes = amount.encode();
+            let mut msg = Vec::with_capacity(
+                PREFIX.len() + 32 + dest_bytes.len() + asset_bytes.len() + amount_bytes.len(),
+            );
             msg.extend_from_slice(PREFIX);
             msg.extend_from_slice(stealth);
             msg.extend_from_slice(&dest_bytes);
             msg.extend_from_slice(&asset_bytes);
+            msg.extend_from_slice(&amount_bytes);
             msg
         }
     }

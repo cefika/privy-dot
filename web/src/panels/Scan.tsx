@@ -7,9 +7,14 @@ import {
   getApi,
   fetchAnnouncements,
   getBalance,
+  getAssetBalance,
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
+  sendAssetFromStealth,
+  withdrawFromStealth,
+  sponsorGas,
+  getSponsorBalance,
 } from "../substrate";
 import type { KeyringPair } from "../substrate";
 import type { KeyPairs } from "../types";
@@ -29,6 +34,7 @@ interface FoundAddress {
   spendingPubKey: string;
   balance: string;
   balancePlanck?: bigint;
+  usdcBalance?: bigint;
 }
 
 interface SpendModal {
@@ -37,6 +43,8 @@ interface SpendModal {
   amount: string;
   loading: boolean;
   txHash: string;
+  useWithdraw: boolean;   // true = pallet withdraw extrinsic, false = direct spend
+  assetId: string;        // asset ID for pallet-assets withdrawal (empty = native)
 }
 
 const SCHEME_ID = 2901n;
@@ -71,7 +79,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
       if (Rs.length === 0) {
         setFound([]); setProgress("");
-        toast("No announcements found on this parachain", "info");
+        toast("No announcements found on this parachain");
         setScanning(false);
         return;
       }
@@ -101,6 +109,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
         const stealthAddress = deriveSubstrateStealthAddress(pubKey);
         const balPlanck = await getBalance(destApi, stealthAddress);
+        const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
+        if (balPlanck === 0n && usdcBalance === 0n) continue; // već potrošeno, preskoči
+
         const balFormatted = (Number(balPlanck) / 1e12).toFixed(4);
 
         matches.push({
@@ -109,6 +120,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           spendingPubKey: pubKey,
           balance: balFormatted,
           balancePlanck: balPlanck,
+          usdcBalance,
         });
       }
 
@@ -174,10 +186,50 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     setModal(m => m ? { ...m, loading: true } : m);
     try {
       const api = await getApi(destPara);
-      const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
-      const hash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+      let hash: string;
+
+      if (modal.useWithdraw) {
+        if (!subSigner) throw new Error("Connect a dev account in the sidebar to use Withdraw via Pallet");
+
+        // Ensure sponsor has enough in the gas pool (WithdrawalFee = 0.01 DOT, MinDeposit = 1 DOT)
+        const WITHDRAWAL_FEE = 10_000_000_000n;
+        const MIN_DEPOSIT = 1_000_000_000_000n; // 1 DOT minimum
+        const poolBal = await getSponsorBalance(api, subSigner.address);
+        if (poolBal < WITHDRAWAL_FEE) {
+          setModal(m => m ? { ...m, loading: true } : m);
+          toast("Depositing sponsor gas (1 DOT)…");
+          await sponsorGas(api, subSigner, MIN_DEPOSIT);
+        }
+
+        // Use the stealthAddresses pallet extrinsic (ECDSA-verified)
+        const assetId = modal.assetId.trim() !== "" ? parseInt(modal.assetId, 10) : undefined;
+        let withdrawAmount: bigint | undefined;
+        if (modal.amount.trim() !== "") {
+          if (assetId !== undefined) {
+            // USDC: 6 decimals
+            withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+          } else {
+            // PAS: 12 decimals
+            withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+          }
+        }
+        hash = await withdrawFromStealth(
+          api,
+          modal.addr.stealthAddress,
+          modal.addr.spendingPrivKey,
+          modal.to,
+          subSigner.address,
+          assetId,
+          withdrawAmount
+        );
+      } else {
+        // Direct balance transfer (signs tx with stealth keypair)
+        const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+        hash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+      }
+
       setModal(m => m ? { ...m, txHash: hash } : m);
-      toast("Spent successfully!", "success");
+      toast("Withdrawal successful!", "success");
       const newBal = await getBalance(api, modal.addr.stealthAddress);
       setFound(f => f.map(a =>
         a.stealthAddress === modal.addr.stealthAddress
@@ -186,7 +238,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       ));
       setModal(null);
     } catch (e: unknown) {
-      toast(e instanceof Error ? e.message : "Spend failed", "error");
+      toast(e instanceof Error ? e.message : "Withdrawal failed", "error");
       setModal(m => m ? { ...m, loading: false } : m);
     }
   }
@@ -289,9 +341,15 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                   <p className="text-2xl font-bold text-emerald-400 mt-2">
                     {addr.balance}
                     <span className="text-base font-medium text-zinc-400 ml-2">
-                      {isXcm ? "tokens" : "PAS"}
+                      {isXcm ? "PAS" : "PAS"}
                     </span>
                   </p>
+                  {isXcm && addr.usdcBalance !== undefined && addr.usdcBalance > 0n && (
+                    <p className="text-lg font-semibold text-blue-400 mt-1">
+                      {(Number(addr.usdcBalance) / 1_000_000).toFixed(2)}
+                      <span className="text-sm font-medium text-zinc-400 ml-2">USDC</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -311,11 +369,11 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               </div>
 
               <button
-                onClick={() => setModal({ addr, to: "", amount: "", loading: false, txHash: "" })}
+                onClick={() => setModal({ addr, to: "", amount: "", loading: false, txHash: "", useWithdraw: false, assetId: "" })}
                 className="btn-primary w-full mt-4 flex items-center justify-center gap-2"
                 disabled={addr.balance === "0.0000"}
               >
-                <Send size={14} /> Spend
+                <Send size={14} /> Spend / Withdraw
               </button>
             </div>
           ))}
@@ -337,9 +395,16 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               Spend from Stealth Address
             </h3>
             <p className="text-xs text-zinc-500 font-mono mb-4">{modal.addr.stealthAddress}</p>
-            <p className="text-sm text-zinc-400 mb-4">
-              Available: <span className="text-emerald-400 font-semibold">{modal.addr.balance} {isXcm ? "tokens" : "PAS"}</span>
-            </p>
+            <div className="mb-4 space-y-1">
+              <p className="text-sm text-zinc-400">
+                Available: <span className="text-emerald-400 font-semibold">{modal.addr.balance} PAS</span>
+              </p>
+              {isXcm && modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
+                <p className="text-sm text-zinc-400">
+                  USDC: <span className="text-blue-400 font-semibold">{(Number(modal.addr.usdcBalance) / 1_000_000).toFixed(2)} USDC</span>
+                </p>
+              )}
+            </div>
 
             {modal.txHash ? (
               <div className="text-center py-4">
@@ -348,11 +413,59 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 <button onClick={() => setModal(null)} className="btn-primary w-full mt-4">Close</button>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
+
+                {/* Step 1: Token */}
+                {isXcm && (
+                  <div>
+                    <label className="label">1. Koji token šalješ?</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, assetId: "", useWithdraw: false } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.assetId === "" ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">PAS</div>
+                        <div className="text-xs text-zinc-500">{modal.addr.balance}</div>
+                      </button>
+                      {modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
+                        <button
+                          onClick={() => setModal(m => m ? { ...m, assetId: "1", useWithdraw: true } : m)}
+                          className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.assetId !== "" ? "border-blue-500 bg-blue-950/50 text-blue-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                        >
+                          <div className="font-semibold">USDC</div>
+                          <div className="text-xs text-zinc-500">{(Number(modal.addr.usdcBalance) / 1_000_000).toFixed(2)}</div>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 2: Metod — samo za PAS */}
+                {isXcm && modal.assetId === "" && (
+                  <div>
+                    <label className="label">2. Kako šalješ?</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, useWithdraw: false } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${!modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">Direktno</div>
+                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                      </button>
+                      <button
+                        onClick={() => setModal(m => m ? { ...m, useWithdraw: true } : m)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                      >
+                        <div className="font-semibold">Pallet Withdraw</div>
+                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Destination */}
                 <div>
-                  <label className="label">
-                    Destination {isXcm ? "AccountId32 (hex or SS58)" : "Address"}
-                  </label>
+                  <label className="label">{isXcm && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
                   <input
                     value={modal.to}
                     onChange={e => setModal(m => m ? { ...m, to: e.target.value } : m)}
@@ -360,24 +473,42 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                     placeholder={isXcm ? "0x… or 5…" : "0x…"}
                   />
                 </div>
-                <div>
-                  <label className="label">Amount ({isXcm ? "tokens" : "PAS"})</label>
-                  <input
-                    type="number"
-                    value={modal.amount}
-                    onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
-                    className="input"
-                    placeholder="0.0"
-                  />
-                </div>
-                <div className="flex gap-2 mt-4">
+
+                {/* Amount */}
+                {(!isXcm || !modal.useWithdraw) && modal.assetId === "" ? (
+                  /* Direct PAS — required */
+                  <div>
+                    <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
+                    <input
+                      type="number"
+                      value={modal.amount}
+                      onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
+                      className="input"
+                      placeholder="0.0"
+                    />
+                  </div>
+                ) : isXcm ? (
+                  /* Pallet PAS or Pallet USDC — optional (empty = ceo balans) */
+                  <div>
+                    <label className="label">{modal.assetId === "" ? "4." : "3."} Iznos ({modal.assetId !== "" ? "USDC" : "PAS"}) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <input
+                      type="number"
+                      value={modal.amount}
+                      onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
+                      className="input"
+                      placeholder={`max: ${modal.assetId !== "" ? (Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2) : modal.addr.balance}`}
+                    />
+                  </div>
+                ) : null}
+
+                <div className="flex gap-2 mt-2">
                   <button
                     onClick={handleSpend}
-                    disabled={modal.loading || !modal.to || !modal.amount}
+                    disabled={modal.loading || !modal.to || ((!isXcm || (!modal.useWithdraw && modal.assetId === "")) && !modal.amount)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2"
                   >
                     {modal.loading ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
-                    {modal.loading ? "Sending…" : "Send"}
+                    {modal.loading ? "Processing…" : modal.useWithdraw ? `Withdraw ${modal.assetId !== "" ? "USDC" : "PAS"}` : "Send PAS"}
                   </button>
                   <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
                 </div>
