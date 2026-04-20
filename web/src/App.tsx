@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info } from "lucide-react";
-import { initWasm } from "./wasm";
+import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi } from "./substrate";
+import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR } from "./substrate";
 import type { KeyringPair } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
@@ -91,6 +91,44 @@ export default function App() {
       return () => clearInterval(id);
     }
   }, [address, mode, refreshBalance]);
+
+  // Auto-scan u pozadini kad se konektuje acc sa keys
+  useEffect(() => {
+    if (!subSigner || !keys || !wasmReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const srcApi = await getApi(sourcePara);
+        const announcements = await fetchAnnouncements(srcApi);
+        if (announcements.length === 0 || cancelled) return;
+        const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
+        const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
+        const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
+        if (cancelled) return;
+        const destApi = await getApi(destPara);
+        const matches: FoundAddress[] = [];
+        for (let i = 0; i < result.spendingPrivKeys.length; i++) {
+          const privKey = result.spendingPrivKeys[i];
+          const pubKey = result.spendingPubKeys[i];
+          if (!privKey || privKey === "0x" || !pubKey) continue;
+          const stealthAddress = deriveSubstrateStealthAddress(pubKey);
+          const balPlanck = await getBalance(destApi, stealthAddress);
+          const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
+          if (balPlanck === 0n && usdcBalance === 0n) continue;
+          matches.push({
+            stealthAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: (Number(balPlanck) / 1e12).toFixed(4),
+            balancePlanck: balPlanck,
+            usdcBalance,
+          });
+        }
+        if (!cancelled) setFoundAddresses(matches);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, keys, sourcePara, destPara, wasmReady]);
 
   useEffect(() => {
     setSubPas(null); setSubUsdc(null);
