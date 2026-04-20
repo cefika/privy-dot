@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Send as SendIcon, ArrowRight, CheckCircle, Loader, ClipboardPaste } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
-import { getContract, deriveStealthAddress } from "../chain";
+import { deriveStealthAddress, announceViaPrecompile, h160ToAccountId32 } from "../chain";
 import {
   getApi,
   sendStealthXcm,
@@ -175,19 +175,37 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
 
       } else {
         if (!signer) throw new Error("Connect a wallet first");
-        const contract = getContract(signer);
+
+        // 1. Ephemeral pubkey R ("X.Y") → 64 bytes
+        const ephemeralPubkey = rToBytes64(resolved.ephemeralKey);
+
+        // 2. ViewTag: WASM vraca 1 byte hex, precompile ocekuje [u8;2]
         const rawVt = resolved.viewTag.replace(/^0x/, "");
-        const paddedVt = rawVt.length % 2 === 0 ? rawVt : "0" + rawVt;
-        const tx = await contract.sendEthViaProxy(
-          resolved.stealthAddress,
-          ethers.toUtf8Bytes(resolved.ephemeralKey),
-          ethers.getBytes("0x" + paddedVt),
-          { value: ethers.parseEther(amount) }
-        );
-        setTxHash(tx.hash);
-        await tx.wait();
+        const vtByte = parseInt(rawVt.slice(0, 2), 16);
+        const viewTag = new Uint8Array([vtByte, 0x00]);
+
+        // 3. AccountId32 za announce: H160 ++ 0xEE*12
+        const stealthAccountId32 = h160ToAccountId32(resolved.stealthAddress);
+
+        // 4. Posalji ETH direktno na H160 stealth adresu
+        const sendTx = await (signer as ethers.Wallet).sendTransaction({
+          to: resolved.stealthAddress,
+          value: ethers.parseEther(amount),
+        });
+        const hash = sendTx.hash;
+        setTxHash(hash);
+        await sendTx.wait();
+
+        // 5. Announce via precompile → pallet storage (isti registry kao Substrate korisnici)
+        try {
+          await announceViaPrecompile(signer, ephemeralPubkey, viewTag, stealthAccountId32);
+        } catch (e) {
+          // Announce greska ne ponistava send, ali obavijesti
+          toast("ETH sent but announce failed — recipient may not find it via scan", "error");
+        }
+
         setStep("done");
-        toast(`Sent ${amount} PAS to stealth address!`, "success");
+        toast(`Sent ${amount} ETH to stealth address!`, "success");
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Transaction failed");

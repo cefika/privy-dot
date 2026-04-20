@@ -13,6 +13,34 @@ export function getPrecompile(signer: ethers.Signer) {
   return new ethers.Contract(PRECOMPILE_ADDR, PRECOMPILE_ABI, signer);
 }
 
+// H160 → AccountId32 (pallet-revive AccountId32Mapper fallback: H160 ++ 0xEE*12)
+export function h160ToAccountId32(address: string): Uint8Array {
+  const bytes = new Uint8Array(32);
+  const h160 = ethers.getBytes(address); // 20 bytes
+  bytes.set(h160, 0);
+  bytes.fill(0xEE, 20);
+  return bytes;
+}
+
+export async function announceViaPrecompile(
+  signer: ethers.Signer,
+  ephemeralPubkey64: Uint8Array, // 64 bytes
+  viewTag2: Uint8Array,           // 2 bytes
+  stealthAccountId32: Uint8Array, // 32 bytes
+  metadata: Uint8Array = new Uint8Array(32),
+): Promise<string> {
+  const precompile = getPrecompile(signer);
+  const tx = await precompile.announce(
+    ethers.hexlify(ephemeralPubkey64),
+    ethers.hexlify(viewTag2),
+    ethers.hexlify(stealthAccountId32),
+    ethers.hexlify(metadata),
+    { gasLimit: 500_000 },
+  );
+  const receipt = await tx.wait();
+  return receipt.hash;
+}
+
 export async function registerMetaAddressViaPrecompile(
   signer: ethers.Signer,
   spendingBytes: Uint8Array,  // 33 bytes compressed secp256k1

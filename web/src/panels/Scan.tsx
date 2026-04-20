@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Radar, Send, Eye, EyeOff, Loader } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
-import { getContract, provider, deriveStealthAddress, signerFromPrivKey } from "../chain";
+import { provider, deriveStealthAddress, signerFromPrivKey } from "../chain";
 import {
   getApi,
   fetchAnnouncements,
@@ -39,8 +39,6 @@ interface SpendModal {
   useWithdraw: boolean;   // true = pallet withdraw extrinsic, false = direct spend
   assetId: string;        // asset ID for pallet-assets withdrawal (empty = native)
 }
-
-const SCHEME_ID = 2901n;
 
 export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
@@ -129,25 +127,26 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
   async function scanEvm() {
     if (!keys) return;
-    setScanning(true); setFound([]); setProgress("Fetching EVM announcements…");
+    setScanning(true); setFound([]); setProgress("Fetching announcements from pallet (Para 1000)…");
     try {
-      const contract = getContract();
-      const filter = contract.filters.Announcement(SCHEME_ID);
-      const events = await contract.queryFilter(filter, Number(fromBlock));
-      setProgress(`Found ${events.length} announcement(s). Running WASM scan…`);
+      // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
+      const api = await getApi(sourcePara);
+      const announcements = await fetchAnnouncements(api);
+      setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
       const viewTags: string[] = [];
 
-      for (const e of events) {
-        const log = e as ethers.EventLog;
-        try {
-          const R = ethers.toUtf8String(log.args[3] as string);
-          const metaBytes = log.args[4] as string;
-          const vt = metaBytes.slice(2, 4);
-          Rs.push(R);
-          viewTags.push(vt);
-        } catch { Rs.push(""); viewTags.push(""); }
+      for (const ann of announcements) {
+        Rs.push(bytes64ToR(ann.ephemeralPubkey));
+        viewTags.push(ann.viewTag[0].toString(16).padStart(2, "0"));
+      }
+
+      if (Rs.length === 0) {
+        setFound([]); setProgress("");
+        toast("No announcements found");
+        setScanning(false);
+        return;
       }
 
       const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
@@ -157,9 +156,16 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         const privKey = result.spendingPrivKeys[i];
         const pubKey = result.spendingPubKeys[i];
         if (!privKey || privKey === "0x" || !pubKey) continue;
+        // EVM stealth adresa je H160
         const stealthAddress = deriveStealthAddress(pubKey);
         const raw = await provider.getBalance(stealthAddress);
-        matches.push({ stealthAddress, spendingPrivKey: privKey, spendingPubKey: pubKey, balance: ethers.formatEther(raw) });
+        if (raw === 0n) continue;
+        matches.push({
+          stealthAddress,
+          spendingPrivKey: privKey,
+          spendingPubKey: pubKey,
+          balance: parseFloat(ethers.formatEther(raw)).toFixed(4),
+        });
       }
 
       setFound(matches);
