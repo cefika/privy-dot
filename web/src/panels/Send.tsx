@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Send as SendIcon, ArrowRight, CheckCircle, Loader, ClipboardPaste } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
-import { deriveStealthAddress, announceViaPrecompile, h160ToAccountId32 } from "../chain";
+import { sendAndAnnounceViaPrecompile } from "../chain";
 import {
   getApi,
   sendStealthXcm,
@@ -90,9 +90,8 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
     const [K, V] = parts;
     try {
       const sendResult = await wasmApi.send(K, V);
-      const stealthAddress = isXcm
-        ? deriveSubstrateStealthAddress(sendResult.spendingPubKey)
-        : deriveStealthAddress(sendResult.spendingPubKey);
+      // I EVM i XCM šalju na AccountId32 (blake2 derivacija) — unifikovan model
+      const stealthAddress = deriveSubstrateStealthAddress(sendResult.spendingPubKey);
       setResolved({ K, V, stealthAddress, ephemeralKey: sendResult.R, viewTag: sendResult.viewTag });
       setStep("resolved");
     } catch (e: unknown) {
@@ -177,34 +176,25 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
       } else {
         if (!signer) throw new Error("Connect a wallet first");
 
-        // 1. Ephemeral pubkey R ("X.Y") → 64 bytes
+        // Ephemeral pubkey R ("X.Y") → 64 bytes
         const ephemeralPubkey = rToBytes64(resolved.ephemeralKey);
 
-        // 2. ViewTag: WASM vraca 1 byte hex, precompile ocekuje [u8;2]
+        // ViewTag: WASM vraca 1 byte hex, precompile ocekuje [u8;2]
         const rawVt = resolved.viewTag.replace(/^0x/, "");
         const vtByte = parseInt(rawVt.slice(0, 2), 16);
         const viewTag = new Uint8Array([vtByte, 0x00]);
 
-        // 3. AccountId32 za announce: H160 ++ 0xEE*12
-        const stealthAccountId32 = h160ToAccountId32(resolved.stealthAddress);
+        // Stealth adresa je AccountId32 hex (0x + 64 chars) — direktno kao bytes32
+        const stealthAccountId32 = ethers.getBytes(resolved.stealthAddress);
 
-        // 4. Posalji ETH direktno na H160 stealth adresu
-        const sendTx = await (signer as ethers.Wallet).sendTransaction({
-          to: resolved.stealthAddress,
-          value: ethers.parseEther(amount),
-        });
-        const hash = sendTx.hash;
+        const hash = await sendAndAnnounceViaPrecompile(
+          signer,
+          stealthAccountId32,
+          amount,
+          ephemeralPubkey,
+          viewTag,
+        );
         setTxHash(hash);
-        await sendTx.wait();
-
-        // 5. Announce via precompile → pallet storage (isti registry kao Substrate korisnici)
-        try {
-          await announceViaPrecompile(signer, ephemeralPubkey, viewTag, stealthAccountId32);
-        } catch (e) {
-          // Announce greska ne ponistava send, ali obavijesti
-          toast("PAS sent but announce failed — recipient may not find it via scan", "error");
-        }
-
         setStep("done");
         toast(`Sent ${amount} PAS to stealth address!`, "success");
       }

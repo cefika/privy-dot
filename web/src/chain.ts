@@ -7,6 +7,7 @@ export const PRECOMPILE_ADDR = "0x0000000000000000000000000000000010000000";
 export const PRECOMPILE_ABI = [
   "function registerMetaAddress(bytes spendingPubkey, bytes viewingPubkey, uint32 schemeId) external",
   "function announce(bytes ephemeralPubkey, bytes2 viewTag, bytes32 stealthAddress, bytes32 metadata) external",
+  "function sendAndAnnounce(bytes32 stealthAddress, bytes ephemeralPubkey, bytes2 viewTag, bytes32 metadata) external payable",
 ];
 
 export function getPrecompile(signer: ethers.Signer) {
@@ -36,6 +37,30 @@ export async function announceViaPrecompile(
     ethers.hexlify(stealthAccountId32),
     ethers.hexlify(metadata),
     { gasLimit: 500_000 },
+  );
+  const receipt = await tx.wait();
+  return receipt.hash;
+}
+
+// Pošalji PAS na AccountId32 stealth adresu + announce u jednoj transakciji
+export async function sendAndAnnounceViaPrecompile(
+  signer: ethers.Signer,
+  stealthAccountId32: Uint8Array, // 32 bytes AccountId32
+  amountEther: string,             // npr. "1.5"
+  ephemeralPubkey64: Uint8Array,  // 64 bytes
+  viewTag2: Uint8Array,            // 2 bytes
+  metadata: Uint8Array = new Uint8Array(32),
+): Promise<string> {
+  const precompile = getPrecompile(signer);
+  const tx = await precompile.sendAndAnnounce(
+    ethers.hexlify(stealthAccountId32),
+    ethers.hexlify(ephemeralPubkey64),
+    ethers.hexlify(viewTag2),
+    ethers.hexlify(metadata),
+    {
+      gasLimit: 800_000,
+      value: ethers.parseEther(amountEther),
+    },
   );
   const receipt = await tx.wait();
   return receipt.hash;

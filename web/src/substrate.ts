@@ -297,8 +297,13 @@ export async function spendFromStealth(
   amount: bigint
 ): Promise<string> {
   const pair = getStealthSpendingKeypair(spendingPrivKey);
+  // Ako je destinacija H160 (20-byte EVM adresa), konvertuj u AccountId32 (H160 ++ 0xEE*12)
+  let dest = to;
+  if (/^0x[0-9a-fA-F]{40}$/.test(to)) {
+    dest = to.toLowerCase().replace("0x", "0x") + "ee".repeat(12);
+  }
   return submitTx(
-    api.tx.balances.transferAllowDeath(to, amount.toString()),
+    api.tx.balances.transferAllowDeath(dest, amount.toString()),
     { type: "keypair", pair }
   );
 }

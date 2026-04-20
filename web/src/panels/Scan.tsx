@@ -282,8 +282,8 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       let txHash: string;
 
       if (modal.addr.addressType === "substrate") {
-        // Pare su na Substrate strani (poslate XCM-om) — trošimo Substrate txom
-        const api = await getApi(sourcePara);
+        // Pare su na Substrate strani (poslate XCM-om) — trošimo na destPara gde su para
+        const api = await getApi(destPara);
         const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
         txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
         const newBal = await getBalance(api, modal.addr.stealthAddress);
@@ -398,7 +398,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       {isXcm ? "PAS" : "PAS"}
                     </span>
                   </p>
-                  {isXcm && addr.usdcBalance !== undefined && addr.usdcBalance > 0n && (
+                  {addr.usdcBalance !== undefined && addr.usdcBalance > 0n && (
                     <p className="text-lg font-semibold text-blue-400 mt-1">
                       {(Number(addr.usdcBalance) / 1_000_000).toFixed(2)}
                       <span className="text-sm font-medium text-zinc-400 ml-2">USDC</span>
@@ -453,7 +453,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <p className="text-sm text-zinc-400">
                 Available: <span className="text-emerald-400 font-semibold">{modal.addr.balance} PAS</span>
               </p>
-              {isXcm && modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
+              {modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
                 <p className="text-sm text-zinc-400">
                   USDC: <span className="text-blue-400 font-semibold">{(Number(modal.addr.usdcBalance) / 1_000_000).toFixed(2)} USDC</span>
                 </p>
@@ -470,7 +470,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <div className="space-y-4">
 
                 {/* Step 1: Token */}
-                {isXcm && (
+                {(isXcm || modal.addr.addressType === "substrate") && (
                   <div>
                     <label className="label">1. Koji token šalješ?</label>
                     <div className="flex gap-2">
@@ -495,7 +495,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 )}
 
                 {/* Step 2: Metod — samo za PAS */}
-                {isXcm && modal.assetId === "" && (
+                {(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" && (
                   <div>
                     <label className="label">2. Kako šalješ?</label>
                     <div className="flex gap-2">
@@ -519,7 +519,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
                 {/* Step 3: Destination */}
                 <div>
-                  <label className="label">{isXcm && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
+                  <label className="label">{(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
                   <input
                     value={modal.to}
                     onChange={e => setModal(m => m ? { ...m, to: e.target.value } : m)}

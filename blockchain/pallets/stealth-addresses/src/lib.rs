@@ -45,7 +45,7 @@ pub mod pallet {
     use polkadot_sdk::staging_xcm::prelude::*;
 
     /// Tip bilansa nativnog tokena izveden iz `NativeBalance` asociranog tipa.
-    pub(crate) type BalanceOf<T> = <<T as Config>::NativeBalance as FungibleInspect<
+    pub type BalanceOf<T> = <<T as Config>::NativeBalance as FungibleInspect<
         <T as frame_system::Config>::AccountId,
     >>::Balance;
 
