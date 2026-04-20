@@ -141,7 +141,7 @@ export default function App() {
       try {
         const api = await getApi(sourcePara);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const existing = await (api.query.stealthAddresses as any).stealthMetaAddresses(signerAddress(subSigner));
+        const existing = await (api.query.stealthAddresses as any).stealthMetaAddressRegistry(signerAddress(subSigner));
         if (cancelled) return;
         if (existing.isNone || !existing.isSome) {
           await registerMetaAddress(api, subSigner, keys.K, keys.V);
