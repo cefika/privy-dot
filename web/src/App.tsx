@@ -41,18 +41,18 @@ export default function App() {
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
   const [address, setAddress] = useState("");
   const [balance, setBalance] = useState("");
-  const [privKeyInput, setPrivKeyInput] = useState("");
-  const [showPrivInput, setShowPrivInput] = useState(false);
   const [blockNumber, setBlockNumber] = useState<number | null>(null);
 
   // XCM / Substrate state
   const [subSigner, setSubSigner] = useState<SubstrateSigner | null>(null);
   const [subAddress, setSubAddress] = useState("");
   const [devAccount, setDevAccount] = useState<DevAccount>("alice");
-  const [showMnemonicInput, setShowMnemonicInput] = useState(false);
   const [extensionAccounts, setExtensionAccounts] = useState<InjectedAccountWithMeta[]>([]);
   const [showWalletModal, setShowWalletModal] = useState(false);
-  const [walletLoading, setWalletLoading] = useState(false);
+  const [extensionLoading, setExtensionLoading] = useState(false);
+  const [showDevInModal, setShowDevInModal] = useState(false);
+  const [showPrivInModal, setShowPrivInModal] = useState(false);
+  const [privKeyModal, setPrivKeyModal] = useState("");
   const [sourcePara, setSourcePara] = useState<number>(1000);
   const [destPara, setDestPara] = useState<number>(2000);
   const [subPas, setSubPas] = useState<string | null>(null);
@@ -201,79 +201,73 @@ export default function App() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
   }
 
-  // ── EVM connect ───────────────────────────────────────────────────────────
+  // ── Wallet connect (unified) ──────────────────────────────────────────────
 
-  async function handleMetaMask() {
+  async function openWalletModal() {
+    setShowWalletModal(true);
+    setExtensionLoading(true);
+    try {
+      const accounts = await getExtensionAccounts();
+      setExtensionAccounts(accounts);
+    } catch {
+      setExtensionAccounts([]);
+    } finally {
+      setExtensionLoading(false);
+    }
+  }
+
+  async function handleMetaMaskFromModal() {
     try {
       const { signer: s, address: a } = await connectMetaMask();
       setSigner(s); setAddress(a);
       setKeys(loadKeys(a));
+      setMode("evm");
+      setShowWalletModal(false);
       addToast("MetaMask connected!", "success");
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : "MetaMask error", "error");
-      setShowPrivInput(true);
+      addToast(e instanceof Error ? e.message : "MetaMask not found", "error");
     }
   }
 
-  function handlePrivKey() {
+  function handlePrivKeyFromModal() {
     try {
-      const w = signerFromPrivKey(privKeyInput.trim());
+      const w = signerFromPrivKey(privKeyModal.trim());
       setSigner(w); setAddress(w.address);
       setKeys(loadKeys(w.address));
-      setShowPrivInput(false); setPrivKeyInput("");
-      addToast("Wallet connected via private key", "success");
+      setMode("evm");
+      setShowWalletModal(false);
+      setPrivKeyModal("");
+      addToast("Connected via private key", "success");
     } catch { addToast("Invalid private key", "error"); }
-  }
-
-  function disconnectEvm() { setSigner(null); setAddress(""); setBalance(""); setKeys(null); }
-
-  // ── XCM / Substrate connect ───────────────────────────────────────────────
-
-  function connectDevAccount(name: DevAccount) {
-    const s = getDevAccount(name);
-    const addr = signerAddress(s);
-    setSubSigner(s);
-    setSubAddress(addr);
-    setDevAccount(name);
-    setKeys(loadKeys(addr));
-    addToast(`Connected as ${name.charAt(0).toUpperCase() + name.slice(1)}`, "success");
-  }
-
-  async function openWalletModal() {
-    setWalletLoading(true);
-    try {
-      const accounts = await getExtensionAccounts();
-      setExtensionAccounts(accounts);
-      setShowWalletModal(true);
-    } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : "Could not connect to wallet extension", "error");
-    } finally {
-      setWalletLoading(false);
-    }
   }
 
   function connectExtensionAccount(account: InjectedAccountWithMeta) {
     const s = signerFromExtensionAccount(account);
     const addr = signerAddress(s);
-    setSubSigner(s);
-    setSubAddress(addr);
+    setSubSigner(s); setSubAddress(addr);
+    setMode("xcm");
     setShowWalletModal(false);
     setKeys(loadKeys(addr));
     addToast(`Connected: ${account.meta.name ?? addr.slice(0, 8)}`, "success");
   }
 
-  function disconnectXcm() {
-    setSubSigner(null); setSubAddress(""); setKeys(null);
-    setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
-    setExtensionAccounts([]); setShowWalletModal(false);
-    disconnectAll();
+  function connectDevAccount(name: DevAccount) {
+    const s = getDevAccount(name);
+    const addr = signerAddress(s);
+    setSubSigner(s); setSubAddress(addr);
+    setDevAccount(name);
+    setMode("xcm");
+    setShowWalletModal(false);
+    setKeys(loadKeys(addr));
+    addToast(`Connected as ${name.charAt(0).toUpperCase() + name.slice(1)}`, "success");
   }
 
-  // ── Mode switch ───────────────────────────────────────────────────────────
-
-  function switchMode(m: Mode) {
-    setMode(m);
-    setTab("keys");
+  function handleDisconnect() {
+    setSigner(null); setAddress(""); setBalance("");
+    setSubSigner(null); setSubAddress("");
+    setKeys(null); setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
+    setExtensionAccounts([]); setShowWalletModal(false);
+    disconnectAll();
   }
 
   if (!wasmReady) {
@@ -307,26 +301,6 @@ export default function App() {
           </div>
           <span className="text-base font-semibold text-text-primary font-display tracking-tight">Privy Dot</span>
           <span className="text-xs text-text-muted ml-1">/ Stealth Addresses on Polkadot</span>
-        </div>
-
-        {/* Mode switcher */}
-        <div className="ml-4 flex items-center gap-1 bg-white/[0.04] rounded-lg p-1 border border-white/[0.06]">
-          <button
-            onClick={() => switchMode("xcm")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-              isXcm ? "bg-accent-purple text-white" : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            XCM / Substrate
-          </button>
-          <button
-            onClick={() => switchMode("evm")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-              !isXcm ? "bg-accent-purple text-white" : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            EVM (pallet-revive)
-          </button>
         </div>
 
         {/* XCM parachain selectors */}
@@ -389,127 +363,53 @@ export default function App() {
           ))}
 
           <div className="pt-4 mt-4 border-t border-white/[0.06] space-y-2">
-            {/* XCM signer */}
-            {isXcm && (
-              connectedAddress ? (
-                <div className="space-y-2 px-1">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="w-2 h-2 rounded-full bg-accent-green shrink-0" />
-                    <span className="font-mono text-text-secondary truncate">
-                      {connectedAddress.slice(0, 6)}…{connectedAddress.slice(-4)}
-                    </span>
-                  </div>
-                  <p className="text-xs text-text-muted pl-4 truncate">
-                    {subSigner?.type === "injected"
-                      ? (subSigner.name ?? "Extension account")
-                      : <span className="capitalize">{devAccount}</span>
-                    }
-                  </p>
-                  <div className="pl-4 space-y-0.5">
-                    {subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
-                    {subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
-                    {autoScanning && (
-                      <p className="text-xs text-zinc-500 flex items-center gap-1">
-                        <Loader size={10} className="animate-spin" /> scanning…
-                      </p>
-                    )}
-                  </div>
-                  {foundAddresses.length > 0 && (() => {
-                    const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
-                    const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
-                    return (
-                      <div className="pl-4 space-y-0.5">
-                        <p className="text-xs text-text-muted">Stealth balances:</p>
-                        {totalPas > 0n && (
-                          <p className="text-xs text-emerald-400 font-semibold">{(Number(totalPas) / 1e12).toFixed(4)} PAS</p>
-                        )}
-                        {totalUsdc > 0n && (
-                          <p className="text-xs text-blue-400 font-semibold">{(Number(totalUsdc) / 1_000_000).toFixed(2)} USDC</p>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  <button onClick={disconnectXcm} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary px-1">
-                    <WifiOff size={11} /> Disconnect
-                  </button>
+            {connectedAddress ? (
+              <div className="space-y-2 px-1">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="w-2 h-2 rounded-full bg-accent-green shrink-0" />
+                  <span className="font-mono text-text-secondary truncate">
+                    {connectedAddress.slice(0, 6)}…{connectedAddress.slice(-4)}
+                  </span>
                 </div>
-              ) : (
-                <div className="space-y-2 px-1">
-                  {/* Primary: extension wallet */}
-                  <button
-                    onClick={openWalletModal}
-                    disabled={walletLoading}
-                    className="w-full flex items-center justify-center gap-1.5 text-xs btn-primary py-2"
-                  >
-                    {walletLoading
-                      ? <><Loader size={11} className="animate-spin" /> Connecting…</>
-                      : <><Wallet size={12} /> Connect Wallet</>
-                    }
-                  </button>
-
-                  {/* Dev accounts (for local testing) */}
-                  <button
-                    onClick={() => setShowMnemonicInput(v => !v)}
-                    className="w-full text-xs text-text-muted hover:text-text-secondary text-center py-0.5"
-                  >
-                    Dev accounts…
-                  </button>
-                  {showMnemonicInput && (
-                    <div className="flex flex-col gap-1">
-                      {(["alice", "bob", "charlie"] as DevAccount[]).map(name => (
-                        <button
-                          key={name}
-                          onClick={() => { connectDevAccount(name); setShowMnemonicInput(false); }}
-                          className="w-full text-left text-xs btn-secondary py-1.5 px-2 capitalize"
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
+                <p className="text-xs text-text-muted pl-4 truncate">
+                  {!isXcm ? "MetaMask / EVM"
+                    : subSigner?.type === "injected" ? (subSigner.name ?? "Extension account")
+                    : <span className="capitalize">{devAccount}</span>}
+                </p>
+                <div className="pl-4 space-y-0.5">
+                  {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} ETH</p>}
+                  {isXcm && subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
+                  {isXcm && subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
+                  {autoScanning && (
+                    <p className="text-xs text-zinc-500 flex items-center gap-1">
+                      <Loader size={10} className="animate-spin" /> scanning…
+                    </p>
                   )}
                 </div>
-              )
-            )}
-
-            {/* EVM signer */}
-            {!isXcm && (
-              address ? (
-                <div className="space-y-2 px-1">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="w-2 h-2 rounded-full bg-accent-green shrink-0" />
-                    <span className="font-mono text-text-secondary truncate">{address.slice(0, 8)}…{address.slice(-4)}</span>
-                  </div>
-                  {balance && <p className="text-xs text-text-muted pl-4">{balance} UNIT</p>}
-                  <button onClick={disconnectEvm} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary px-1">
-                    <WifiOff size={11} /> Disconnect
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-1.5 px-1">
-                  <button onClick={handleMetaMask} className="w-full flex items-center justify-center gap-1.5 text-xs btn-secondary py-1.5">
-                    <Wallet size={12} /> MetaMask
-                  </button>
-                  <button onClick={() => setShowPrivInput(v => !v)} className="w-full text-xs text-text-muted hover:text-text-secondary text-center py-1">
-                    Private Key
-                  </button>
-                  {showPrivInput && (
-                    <div className="space-y-1.5">
-                      <input
-                        type="password"
-                        value={privKeyInput}
-                        onChange={e => setPrivKeyInput(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && handlePrivKey()}
-                        className="input-field w-full text-xs py-1.5"
-                        placeholder="0x private key…"
-                      />
-                      <div className="flex gap-1">
-                        <button onClick={handlePrivKey} className="btn-primary text-xs py-1 px-2 flex-1">Connect</button>
-                        <button onClick={() => setShowPrivInput(false)} className="btn-secondary text-xs py-1 px-2">✕</button>
-                      </div>
+                {isXcm && foundAddresses.length > 0 && (() => {
+                  const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
+                  const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
+                  return (
+                    <div className="pl-4 space-y-0.5">
+                      <p className="text-xs text-text-muted">Stealth balances:</p>
+                      {totalPas > 0n && <p className="text-xs text-emerald-400 font-semibold">{(Number(totalPas) / 1e12).toFixed(4)} PAS</p>}
+                      {totalUsdc > 0n && <p className="text-xs text-blue-400 font-semibold">{(Number(totalUsdc) / 1_000_000).toFixed(2)} USDC</p>}
                     </div>
-                  )}
-                </div>
-              )
+                  );
+                })()}
+                <button onClick={handleDisconnect} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary px-1">
+                  <WifiOff size={11} /> Disconnect
+                </button>
+              </div>
+            ) : (
+              <div className="px-1">
+                <button
+                  onClick={openWalletModal}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs btn-primary py-2"
+                >
+                  <Wallet size={12} /> Connect Wallet
+                </button>
+              </div>
             )}
           </div>
         </nav>
@@ -522,42 +422,120 @@ export default function App() {
         </main>
       </div>
 
-      {/* Wallet account picker modal */}
+      {/* Unified wallet picker modal */}
       {showWalletModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowWalletModal(false)} />
           <div className="relative bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-              <h2 className="text-sm font-semibold text-zinc-100">Select account</h2>
+              <h2 className="text-sm font-semibold text-zinc-100">Connect Wallet</h2>
               <button onClick={() => setShowWalletModal(false)} className="text-zinc-500 hover:text-zinc-300">
                 <X size={16} />
               </button>
             </div>
-            <div className="p-3 max-h-80 overflow-y-auto space-y-1">
-              {extensionAccounts.length === 0 ? (
-                <p className="text-xs text-zinc-500 text-center py-6">No accounts found in your wallet extension.</p>
-              ) : (
-                extensionAccounts.map(account => (
-                  <button
-                    key={account.address}
-                    onClick={() => connectExtensionAccount(account)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 transition-colors text-left"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-violet-900/60 border border-violet-700/40 flex items-center justify-center shrink-0">
-                      <span className="text-xs text-violet-300 font-semibold">
-                        {(account.meta.name ?? "?")[0].toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-zinc-200 truncate">{account.meta.name ?? "Account"}</p>
-                      <p className="text-xs font-mono text-zinc-500 truncate">{account.address.slice(0, 12)}…{account.address.slice(-6)}</p>
-                    </div>
-                    {account.meta.source && (
-                      <span className="text-xs text-zinc-600 shrink-0">{account.meta.source}</span>
-                    )}
-                  </button>
-                ))
-              )}
+
+            <div className="p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+              {/* MetaMask */}
+              <div>
+                <p className="text-xs text-zinc-500 uppercase tracking-wider px-1 mb-1.5">EVM</p>
+                <button
+                  onClick={handleMetaMaskFromModal}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 border border-zinc-700 transition-colors text-left"
+                >
+                  <div className="w-7 h-7 rounded-full bg-orange-900/40 border border-orange-700/40 flex items-center justify-center shrink-0 text-base">
+                    🦊
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-zinc-200">MetaMask</p>
+                    <p className="text-xs text-zinc-500">Connect via browser extension</p>
+                  </div>
+                </button>
+              </div>
+
+              {/* Extension accounts (Talisman, Polkadot.js) */}
+              <div>
+                <p className="text-xs text-zinc-500 uppercase tracking-wider px-1 mb-1.5">Substrate</p>
+                {extensionLoading ? (
+                  <div className="flex items-center gap-2 px-3 py-4 text-xs text-zinc-500">
+                    <Loader size={12} className="animate-spin" /> Loading accounts…
+                  </div>
+                ) : extensionAccounts.length === 0 ? (
+                  <p className="text-xs text-zinc-600 px-3 py-3">No extension accounts found.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {extensionAccounts.map(account => (
+                      <button
+                        key={account.address}
+                        onClick={() => connectExtensionAccount(account)}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 transition-colors text-left"
+                      >
+                        <div className="w-7 h-7 rounded-full bg-violet-900/60 border border-violet-700/40 flex items-center justify-center shrink-0">
+                          <span className="text-xs text-violet-300 font-semibold">
+                            {(account.meta.name ?? "?")[0].toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-zinc-200 truncate">{account.meta.name ?? "Account"}</p>
+                          <p className="text-xs font-mono text-zinc-500 truncate">{account.address.slice(0, 12)}…{account.address.slice(-6)}</p>
+                        </div>
+                        {account.meta.source && (
+                          <span className="text-xs text-zinc-600 shrink-0">{account.meta.source}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Dev accounts */}
+              <div className="border-t border-zinc-800 pt-2">
+                <button
+                  onClick={() => setShowDevInModal(v => !v)}
+                  className="w-full text-xs text-zinc-500 hover:text-zinc-400 text-left px-1 py-1 flex items-center gap-1"
+                >
+                  <span className={`transition-transform ${showDevInModal ? "rotate-90" : ""}`}>▶</span>
+                  Dev accounts (local testing)
+                </button>
+                {showDevInModal && (
+                  <div className="flex flex-col gap-1 mt-1.5">
+                    {(["alice", "bob", "charlie"] as DevAccount[]).map(name => (
+                      <button
+                        key={name}
+                        onClick={() => connectDevAccount(name)}
+                        className="w-full text-left text-xs btn-secondary py-1.5 px-3 capitalize"
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Private key (EVM) */}
+              <div className="border-t border-zinc-800 pt-2">
+                <button
+                  onClick={() => setShowPrivInModal(v => !v)}
+                  className="w-full text-xs text-zinc-500 hover:text-zinc-400 text-left px-1 py-1 flex items-center gap-1"
+                >
+                  <span className={`transition-transform ${showPrivInModal ? "rotate-90" : ""}`}>▶</span>
+                  Private key (EVM)
+                </button>
+                {showPrivInModal && (
+                  <div className="space-y-1.5 mt-1.5">
+                    <input
+                      type="password"
+                      value={privKeyModal}
+                      onChange={e => setPrivKeyModal(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handlePrivKeyFromModal()}
+                      className="input-field w-full text-xs py-1.5"
+                      placeholder="0x private key…"
+                    />
+                    <button onClick={handlePrivKeyFromModal} className="btn-primary text-xs py-1.5 w-full">
+                      Connect
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
