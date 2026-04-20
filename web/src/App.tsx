@@ -1,28 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR } from "./substrate";
+import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
 import type { KeyringPair } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
-import ReceivePanel from "./panels/Register";
 
 const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? "http://127.0.0.1:8545";
 
-type Tab = "keys" | "send" | "scan" | "register";
+type Tab = "keys" | "send" | "scan";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
 const NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "keys",     label: "My Keys",  Icon: Key      },
-  { id: "send",     label: "Send",     Icon: Send     },
-  { id: "scan",     label: "Scan",     Icon: Radar    },
-  { id: "register", label: "Receive",  Icon: Download },
+  { id: "keys", label: "My Keys", Icon: Key  },
+  { id: "send", label: "Send",    Icon: Send },
+  { id: "scan", label: "Scan",    Icon: Radar },
 ];
 
 function keysLSKey(addr: string) { return `privy-keys-${addr.toLowerCase()}`; }
@@ -132,6 +130,24 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, destPara, wasmReady]);
+
+  // Auto-register meta address kad su keys + subSigner dostupni
+  useEffect(() => {
+    if (!subSigner || !keys || !wasmReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = await getApi(sourcePara);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existing = await (api.query.stealthAddresses as any).stealthMetaAddresses(subSigner.address);
+        if (cancelled) return;
+        if (existing.isNone || !existing.isSome) {
+          await registerMetaAddress(api, subSigner, keys.K, keys.V);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, keys, sourcePara, wasmReady]);
 
   useEffect(() => {
     setSubPas(null); setSubUsdc(null);
@@ -459,10 +475,9 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys"     && <KeysPanel    keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
-          {tab === "send"     && <SendPanel    mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan"     && <ScanPanel    mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
-          {tab === "register" && <ReceivePanel mode={mode} keys={keys} subSigner={subSigner} sourcePara={sourcePara} />}
+          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
+          {tab === "send" && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
         </main>
       </div>
 
