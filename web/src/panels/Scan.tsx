@@ -15,7 +15,8 @@ import {
   sponsorGas,
   getSponsorBalance,
 } from "../substrate";
-import type { KeyringPair } from "../substrate";
+import { signerAddress } from "../substrate";
+import type { SubstrateSigner } from "../substrate";
 import type { KeyPairs, FoundAddress } from "../types";
 
 interface Props {
@@ -23,7 +24,7 @@ interface Props {
   keys: KeyPairs | null;
   sourcePara: number;
   destPara: number;
-  subSigner: KeyringPair | null;
+  subSigner: SubstrateSigner | null;
   found: FoundAddress[];
   setFound: React.Dispatch<React.SetStateAction<FoundAddress[]>>;
   toast: (msg: string, type?: "success" | "error") => void;
@@ -185,7 +186,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         // Ensure sponsor has enough in the gas pool (WithdrawalFee = 0.01 DOT, MinDeposit = 1 DOT)
         const WITHDRAWAL_FEE = 10_000_000_000n;
         const MIN_DEPOSIT = 1_000_000_000_000n; // 1 DOT minimum
-        const poolBal = await getSponsorBalance(api, subSigner.address);
+        const poolBal = await getSponsorBalance(api, signerAddress(subSigner));
         if (poolBal < WITHDRAWAL_FEE) {
           setModal(m => m ? { ...m, loading: true } : m);
           toast("Depositing sponsor gas (1 DOT)…");

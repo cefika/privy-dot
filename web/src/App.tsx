@@ -4,8 +4,8 @@ import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, L
 import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
-import type { KeyringPair } from "./substrate";
+import { getDevAccount, getAccountFromMnemonic, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
+import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
@@ -46,11 +46,14 @@ export default function App() {
   const [blockNumber, setBlockNumber] = useState<number | null>(null);
 
   // XCM / Substrate state
-  const [subSigner, setSubSigner] = useState<KeyringPair | null>(null);
+  const [subSigner, setSubSigner] = useState<SubstrateSigner | null>(null);
   const [subAddress, setSubAddress] = useState("");
   const [devAccount, setDevAccount] = useState<DevAccount>("alice");
   const [mnemonicInput, setMnemonicInput] = useState("");
   const [showMnemonicInput, setShowMnemonicInput] = useState(false);
+  const [extensionAccounts, setExtensionAccounts] = useState<InjectedAccountWithMeta[]>([]);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(false);
   const [sourcePara, setSourcePara] = useState<number>(1000);
   const [destPara, setDestPara] = useState<number>(2000);
   const [subPas, setSubPas] = useState<string | null>(null);
@@ -139,7 +142,7 @@ export default function App() {
       try {
         const api = await getApi(sourcePara);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const existing = await (api.query.stealthAddresses as any).stealthMetaAddresses(subSigner.address);
+        const existing = await (api.query.stealthAddresses as any).stealthMetaAddresses(signerAddress(subSigner));
         if (cancelled) return;
         if (existing.isNone || !existing.isSome) {
           await registerMetaAddress(api, subSigner, keys.K, keys.V);
@@ -159,8 +162,8 @@ export default function App() {
     (async () => {
       try {
         const api = await getApi(sourcePara);
-        const pas = await getBalance(api, subSigner.address);
-        const usdc = await getAssetBalance(api, subSigner.address, 1);
+        const pas = await getBalance(api, signerAddress(subSigner));
+        const usdc = await getAssetBalance(api, signerAddress(subSigner), 1);
         if (!cancelled) {
           setSubPas((Number(pas) / 1e12).toFixed(4));
           setSubUsdc((Number(usdc) / 1_000_000).toFixed(2));
@@ -211,28 +214,54 @@ export default function App() {
   // ── XCM / Substrate connect ───────────────────────────────────────────────
 
   function connectDevAccount(name: DevAccount) {
-    const pair = getDevAccount(name);
-    setSubSigner(pair);
-    setSubAddress(pair.address);
+    const s = getDevAccount(name);
+    const addr = signerAddress(s);
+    setSubSigner(s);
+    setSubAddress(addr);
     setDevAccount(name);
-    setKeys(loadKeys(pair.address));
+    setKeys(loadKeys(addr));
     addToast(`Connected as ${name.charAt(0).toUpperCase() + name.slice(1)}`, "success");
   }
 
   function connectMnemonic() {
     try {
-      const pair = getAccountFromMnemonic(mnemonicInput.trim());
-      setSubSigner(pair);
-      setSubAddress(pair.address);
+      const s = getAccountFromMnemonic(mnemonicInput.trim());
+      const addr = signerAddress(s);
+      setSubSigner(s);
+      setSubAddress(addr);
       setMnemonicInput(""); setShowMnemonicInput(false);
-      setKeys(loadKeys(pair.address));
+      setKeys(loadKeys(addr));
       addToast("Connected via mnemonic", "success");
     } catch { addToast("Invalid mnemonic", "error"); }
+  }
+
+  async function openWalletModal() {
+    setWalletLoading(true);
+    try {
+      const accounts = await getExtensionAccounts();
+      setExtensionAccounts(accounts);
+      setShowWalletModal(true);
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : "Could not connect to wallet extension", "error");
+    } finally {
+      setWalletLoading(false);
+    }
+  }
+
+  function connectExtensionAccount(account: InjectedAccountWithMeta) {
+    const s = signerFromExtensionAccount(account);
+    const addr = signerAddress(s);
+    setSubSigner(s);
+    setSubAddress(addr);
+    setShowWalletModal(false);
+    setKeys(loadKeys(addr));
+    addToast(`Connected: ${account.meta.name ?? addr.slice(0, 8)}`, "success");
   }
 
   function disconnectXcm() {
     setSubSigner(null); setSubAddress(""); setKeys(null);
     setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
+    setExtensionAccounts([]); setShowWalletModal(false);
     disconnectAll();
   }
 
