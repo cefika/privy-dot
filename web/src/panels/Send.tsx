@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Send as SendIcon, ArrowRight, CheckCircle, Loader, ClipboardPaste } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
-import { getContract, deriveStealthAddress } from "../chain";
+import { sendAndAnnounceViaPrecompile } from "../chain";
 import {
   getApi,
   sendStealthXcm,
@@ -90,9 +90,8 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
     const [K, V] = parts;
     try {
       const sendResult = await wasmApi.send(K, V);
-      const stealthAddress = isXcm
-        ? deriveSubstrateStealthAddress(sendResult.spendingPubKey)
-        : deriveStealthAddress(sendResult.spendingPubKey);
+      // I EVM i XCM šalju na AccountId32 (blake2 derivacija) — unifikovan model
+      const stealthAddress = deriveSubstrateStealthAddress(sendResult.spendingPubKey);
       setResolved({ K, V, stealthAddress, ephemeralKey: sendResult.R, viewTag: sendResult.viewTag });
       setStep("resolved");
     } catch (e: unknown) {
@@ -103,6 +102,7 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
   async function sendFunds() {
     if (!resolved) return;
     setStep("sending"); setError("");
+    console.log("[Send] mode:", mode, "isXcm:", isXcm, "signer:", signer ? "set" : "null", "subSigner:", subSigner ? "set" : "null");
 
     try {
       if (isXcm) {
@@ -175,17 +175,26 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
 
       } else {
         if (!signer) throw new Error("Connect a wallet first");
-        const contract = getContract(signer);
+
+        // Ephemeral pubkey R ("X.Y") → 64 bytes
+        const ephemeralPubkey = rToBytes64(resolved.ephemeralKey);
+
+        // ViewTag: WASM vraca 1 byte hex, precompile ocekuje [u8;2]
         const rawVt = resolved.viewTag.replace(/^0x/, "");
-        const paddedVt = rawVt.length % 2 === 0 ? rawVt : "0" + rawVt;
-        const tx = await contract.sendEthViaProxy(
-          resolved.stealthAddress,
-          ethers.toUtf8Bytes(resolved.ephemeralKey),
-          ethers.getBytes("0x" + paddedVt),
-          { value: ethers.parseEther(amount) }
+        const vtByte = parseInt(rawVt.slice(0, 2), 16);
+        const viewTag = new Uint8Array([vtByte, 0x00]);
+
+        // Stealth adresa je AccountId32 hex (0x + 64 chars) — direktno kao bytes32
+        const stealthAccountId32 = ethers.getBytes(resolved.stealthAddress);
+
+        const hash = await sendAndAnnounceViaPrecompile(
+          signer,
+          stealthAccountId32,
+          amount,
+          ephemeralPubkey,
+          viewTag,
         );
-        setTxHash(tx.hash);
-        await tx.wait();
+        setTxHash(hash);
         setStep("done");
         toast(`Sent ${amount} PAS to stealth address!`, "success");
       }

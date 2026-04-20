@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Radar, Send, Eye, EyeOff, Loader } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
-import { getContract, provider, deriveStealthAddress, signerFromPrivKey } from "../chain";
+import { provider, deriveStealthAddress, signerFromPrivKey } from "../chain";
 import {
   getApi,
   fetchAnnouncements,
@@ -39,8 +39,6 @@ interface SpendModal {
   useWithdraw: boolean;   // true = pallet withdraw extrinsic, false = direct spend
   assetId: string;        // asset ID for pallet-assets withdrawal (empty = native)
 }
-
-const SCHEME_ID = 2901n;
 
 export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
@@ -129,37 +127,67 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
   async function scanEvm() {
     if (!keys) return;
-    setScanning(true); setFound([]); setProgress("Fetching EVM announcements…");
+    setScanning(true); setFound([]); setProgress("Fetching announcements from pallet…");
     try {
-      const contract = getContract();
-      const filter = contract.filters.Announcement(SCHEME_ID);
-      const events = await contract.queryFilter(filter, Number(fromBlock));
-      setProgress(`Found ${events.length} announcement(s). Running WASM scan…`);
+      // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
+      const api = await getApi(sourcePara);
+      const announcements = await fetchAnnouncements(api);
+      setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
       const viewTags: string[] = [];
 
-      for (const e of events) {
-        const log = e as ethers.EventLog;
-        try {
-          const R = ethers.toUtf8String(log.args[3] as string);
-          const metaBytes = log.args[4] as string;
-          const vt = metaBytes.slice(2, 4);
-          Rs.push(R);
-          viewTags.push(vt);
-        } catch { Rs.push(""); viewTags.push(""); }
+      for (const ann of announcements) {
+        Rs.push(bytes64ToR(ann.ephemeralPubkey));
+        viewTags.push(ann.viewTag[0].toString(16).padStart(2, "0"));
+      }
+
+      if (Rs.length === 0) {
+        setFound([]); setProgress("");
+        toast("No announcements found");
+        setScanning(false);
+        return;
       }
 
       const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
+
+      // Poseban API za destPara — XCM transferi deponuju pare tamo, ne na sourcePara
+      const destApi = sourcePara !== destPara ? await getApi(destPara) : api;
 
       const matches: FoundAddress[] = [];
       for (let i = 0; i < result.spendingPrivKeys.length; i++) {
         const privKey = result.spendingPrivKeys[i];
         const pubKey = result.spendingPubKeys[i];
         if (!privKey || privKey === "0x" || !pubKey) continue;
-        const stealthAddress = deriveStealthAddress(pubKey);
-        const raw = await provider.getBalance(stealthAddress);
-        matches.push({ stealthAddress, spendingPrivKey: privKey, spendingPubKey: pubKey, balance: ethers.formatEther(raw) });
+
+        // Provjeri EVM balans (H160 adresa — primljeno EVM sendom na Para 1000)
+        const evmAddress = deriveStealthAddress(pubKey);
+        const evmRaw = await provider.getBalance(evmAddress);
+        if (evmRaw > 0n) {
+          matches.push({
+            stealthAddress: evmAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: parseFloat(ethers.formatEther(evmRaw)).toFixed(4),
+            addressType: "evm",
+          });
+        }
+
+        // Provjeri Substrate balans na DEST parachanu (XCM send ide sourcePara → destPara)
+        const subAddress = deriveSubstrateStealthAddress(pubKey);
+        const subBal = await getBalance(destApi, subAddress);
+        const subUsdc = await getAssetBalance(destApi, subAddress, 1);
+        if (subBal > 0n || subUsdc > 0n) {
+          matches.push({
+            stealthAddress: subAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: (Number(subBal) / 1e12).toFixed(4),
+            balancePlanck: subBal,
+            usdcBalance: subUsdc,
+            addressType: "substrate",
+          });
+        }
       }
 
       setFound(matches);
@@ -251,15 +279,33 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     if (!modal) return;
     setModal(m => m ? { ...m, loading: true } : m);
     try {
-      const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
-      const tx = await spendSigner.sendTransaction({ to: modal.to, value: ethers.parseEther(modal.amount) });
-      setModal(m => m ? { ...m, txHash: tx.hash } : m);
-      await tx.wait();
+      let txHash: string;
+
+      if (modal.addr.addressType === "substrate") {
+        // Pare su na Substrate strani (poslate XCM-om) — trošimo na destPara gde su para
+        const api = await getApi(destPara);
+        const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+        txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+        const newBal = await getBalance(api, modal.addr.stealthAddress);
+        setFound(f => f.map(a =>
+          a.stealthAddress === modal.addr.stealthAddress
+            ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
+            : a
+        ));
+      } else {
+        // Pare su na EVM strani — standardni EVM send
+        const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
+        const tx = await spendSigner.sendTransaction({ to: modal.to, value: ethers.parseEther(modal.amount) });
+        txHash = tx.hash;
+        await tx.wait();
+        const raw = await provider.getBalance(modal.addr.stealthAddress);
+        setFound(f => f.map(a =>
+          a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
+        ));
+      }
+
+      setModal(m => m ? { ...m, txHash } : m);
       toast("Spent successfully!", "success");
-      const raw = await provider.getBalance(modal.addr.stealthAddress);
-      setFound(f => f.map(a =>
-        a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
-      ));
       setModal(null);
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : "Spend failed", "error");
@@ -338,7 +384,11 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-2 h-2 rounded-full bg-emerald-400" />
                     <span className="text-xs text-zinc-500">
-                      {isXcm ? `Stealth AccountId32 (Para ${destPara})` : "Stealth Address"}
+                      {isXcm
+                        ? `Stealth AccountId32 (Para ${destPara})`
+                        : addr.addressType === "substrate"
+                          ? "Stealth AccountId32 (primljeno via XCM)"
+                          : "Stealth EVM adresa"}
                     </span>
                   </div>
                   <p className="font-mono text-sm text-zinc-100 break-all">{addr.stealthAddress}</p>
@@ -348,7 +398,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       {isXcm ? "PAS" : "PAS"}
                     </span>
                   </p>
-                  {isXcm && addr.usdcBalance !== undefined && addr.usdcBalance > 0n && (
+                  {addr.usdcBalance !== undefined && addr.usdcBalance > 0n && (
                     <p className="text-lg font-semibold text-blue-400 mt-1">
                       {(Number(addr.usdcBalance) / 1_000_000).toFixed(2)}
                       <span className="text-sm font-medium text-zinc-400 ml-2">USDC</span>
@@ -403,7 +453,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <p className="text-sm text-zinc-400">
                 Available: <span className="text-emerald-400 font-semibold">{modal.addr.balance} PAS</span>
               </p>
-              {isXcm && modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
+              {modal.addr.usdcBalance !== undefined && modal.addr.usdcBalance > 0n && (
                 <p className="text-sm text-zinc-400">
                   USDC: <span className="text-blue-400 font-semibold">{(Number(modal.addr.usdcBalance) / 1_000_000).toFixed(2)} USDC</span>
                 </p>
@@ -420,7 +470,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <div className="space-y-4">
 
                 {/* Step 1: Token */}
-                {isXcm && (
+                {(isXcm || modal.addr.addressType === "substrate") && (
                   <div>
                     <label className="label">1. Koji token šalješ?</label>
                     <div className="flex gap-2">
@@ -445,7 +495,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 )}
 
                 {/* Step 2: Metod — samo za PAS */}
-                {isXcm && modal.assetId === "" && (
+                {(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" && (
                   <div>
                     <label className="label">2. Kako šalješ?</label>
                     <div className="flex gap-2">
@@ -469,7 +519,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
                 {/* Step 3: Destination */}
                 <div>
-                  <label className="label">{isXcm && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
+                  <label className="label">{(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
                   <input
                     value={modal.to}
                     onChange={e => setModal(m => m ? { ...m, to: e.target.value } : m)}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
@@ -11,7 +11,7 @@ import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
 
-const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? "http://127.0.0.1:8545";
+const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? `${window.location.origin}/eth-rpc`;
 
 type Tab = "keys" | "send" | "scan";
 type Mode = "evm" | "xcm";
@@ -63,6 +63,9 @@ export default function App() {
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  // Track which EVM address has already been registered to avoid duplicate MetaMask popups
+  const registeredEvmAddress = useRef<string>("");
+
   useEffect(() => {
     configure(RPC_URL, contractAddress ?? "");
   }, []);
@@ -80,18 +83,19 @@ export default function App() {
 
   const refreshBalance = useCallback(async (addr: string) => {
     try {
-      const b = await provider.getBalance(addr);
+      // Koristi MetaMask-ov provajder ako postoji — da bude konzistentno sa Send panelom
+      const p = (signer as any)?.provider ?? provider;
+      const b = await p.getBalance(addr);
       setBalance(parseFloat(ethers.formatEther(b)).toFixed(4));
     } catch { setBalance("—"); }
-  }, []);
+  }, [signer]);
 
   useEffect(() => {
-    if (address && mode === "evm") {
-      refreshBalance(address);
-      const id = setInterval(() => refreshBalance(address), 15_000);
-      return () => clearInterval(id);
-    }
-  }, [address, mode, refreshBalance]);
+    if (!address) return;
+    refreshBalance(address);
+    const id = setInterval(() => refreshBalance(address), 15_000);
+    return () => clearInterval(id);
+  }, [address, refreshBalance]);
 
   // Auto-scan u pozadini kad se konektuje acc sa keys
   useEffect(() => {
@@ -154,22 +158,24 @@ export default function App() {
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, wasmReady]);
 
-  // Auto-register meta address via EVM precompile kad su keys + MetaMask signer dostupni
-  useEffect(() => {
-    if (!signer || !keys || !wasmReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const spBytes = secp256k1ToCompressed(keys.K);
-        const vpBytes = bn254ToBytes64(keys.V);
-        const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
-        if (!cancelled) addToast(`Meta address registered via precompile (${hash.slice(0, 10)}…)`, "success");
-      } catch (e: unknown) {
-        if (!cancelled) addToast(e instanceof Error ? e.message : "Precompile registration failed", "error");
+  // Eksplicitna registracija na zahtev korisnika (dugme u Keys panelu)
+  async function handleRegisterViaPrecompile() {
+    if (!signer || !keys) return;
+    try {
+      const addr = await signer.getAddress();
+      if (registeredEvmAddress.current === addr.toLowerCase()) {
+        addToast("Already registered in this session", "info");
+        return;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [signer, keys, wasmReady]);
+      const spBytes = secp256k1ToCompressed(keys.K);
+      const vpBytes = bn254ToBytes64(keys.V);
+      const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
+      registeredEvmAddress.current = addr.toLowerCase();
+      addToast(`Registered on-chain (${hash.slice(0, 10)}…)`, "success");
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : "Registration failed", "error");
+    }
+  }
 
   useEffect(() => {
     setSubPas(null); setSubUsdc(null);
@@ -377,7 +383,7 @@ export default function App() {
                     : <span className="capitalize">{devAccount}</span>}
                 </p>
                 <div className="pl-4 space-y-0.5">
-                  {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} ETH</p>}
+                  {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} PAS</p>}
                   {isXcm && subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
                   {isXcm && subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
                   {autoScanning && (
@@ -386,7 +392,7 @@ export default function App() {
                     </p>
                   )}
                 </div>
-                {isXcm && foundAddresses.length > 0 && (() => {
+                {foundAddresses.length > 0 && (() => {
                   const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
                   const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
                   return (
@@ -416,7 +422,7 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
+          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
           {tab === "send" && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
         </main>
