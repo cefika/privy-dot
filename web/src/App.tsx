@@ -143,8 +143,11 @@ export default function App() {
         if (cancelled) return;
         if (existing.isNone || !existing.isSome) {
           await registerMetaAddress(api, subSigner, keys.K, keys.V);
+          if (!cancelled) addToast("Meta address registered on-chain", "success");
         }
-      } catch {}
+      } catch (e: unknown) {
+        if (!cancelled) addToast(e instanceof Error ? e.message : "Registration failed", "error");
+      }
     })();
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, wasmReady]);
