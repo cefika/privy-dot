@@ -13,12 +13,13 @@ import {
   getBalance,
   getAssetBalance,
 } from "../substrate";
-import type { KeyringPair } from "../substrate";
+import { signerAddress } from "../substrate";
+import type { SubstrateSigner } from "../substrate";
 
 interface Props {
   mode: "evm" | "xcm";
   signer: ethers.Signer | null;
-  subSigner: KeyringPair | null;
+  subSigner: SubstrateSigner | null;
   sourcePara: number;
   destPara: number;
   toast: (msg: string, type?: "success" | "error") => void;
@@ -58,10 +59,10 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
           const paraId = tokenType === "usdc" && sourcePara !== destPara ? sourcePara : (tokenType === "usdc" ? destPara : sourcePara);
           const api = await getApi(paraId);
           if (tokenType === "usdc") {
-            const raw = await getAssetBalance(api, subSigner.address, 1);
+            const raw = await getAssetBalance(api, signerAddress(subSigner), 1);
             if (!cancelled) setBalance((Number(raw) / 1_000_000).toFixed(2) + " USDC");
           } else {
-            const raw = await getBalance(api, subSigner.address);
+            const raw = await getBalance(api, signerAddress(subSigner));
             if (!cancelled) setBalance((Number(raw) / 1e12).toFixed(4) + " PAS");
           }
         } else if (!isXcm && signer) {

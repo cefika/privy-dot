@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Copy, Check, QrCode, Upload, Loader, CheckCircle } from "lucide-react";
 import { getApi, registerMetaAddress } from "../substrate";
-import type { KeyringPair } from "../substrate";
+import type { SubstrateSigner } from "../substrate";
 import type { KeyPairs } from "../types";
 
 interface Props {
   mode: "evm" | "xcm";
   keys: KeyPairs | null;
-  subSigner: KeyringPair | null;
+  subSigner: SubstrateSigner | null;
   sourcePara: number;
 }
 

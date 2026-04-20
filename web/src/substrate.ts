@@ -2,9 +2,35 @@ import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
 import { blake2AsU8a, decodeAddress } from "@polkadot/util-crypto";
 import { u8aToHex, hexToU8a } from "@polkadot/util";
+import { web3Enable, web3Accounts, web3FromAddress } from "@polkadot/extension-dapp";
 import type { KeyringPair } from "@polkadot/keyring/types";
+import type { InjectedAccountWithMeta } from "@polkadot/extension-inject/types";
 
-export type { KeyringPair };
+export type { KeyringPair, InjectedAccountWithMeta };
+
+// ── Signer union type ─────────────────────────────────────────────────────────
+
+/** Jednobrazni signer koji može biti dev keypair ili extenzija (Talisman, SubWallet…) */
+export type SubstrateSigner =
+  | { type: "keypair"; pair: KeyringPair }
+  | { type: "injected"; address: string; name?: string };
+
+/** Izvlači adresu bez obzira na tip signera */
+export function signerAddress(s: SubstrateSigner): string {
+  return s.type === "keypair" ? s.pair.address : s.address;
+}
+
+// ── Extension wallet API ──────────────────────────────────────────────────────
+
+/**
+ * Traži dozvolu od browser extenzija (Talisman, SubWallet, Polkadot.js).
+ * Vraća listu account-a dostupnih u extenzijama.
+ */
+export async function getExtensionAccounts(): Promise<InjectedAccountWithMeta[]> {
+  const extensions = await web3Enable("Privy Dot");
+  if (extensions.length === 0) throw new Error("No Polkadot wallet extension found. Install Talisman or SubWallet.");
+  return web3Accounts();
+}
 
 // ── Parachain config ──────────────────────────────────────────────────────────
 
@@ -32,14 +58,20 @@ export function disconnectAll() {
 
 // ── Signers ───────────────────────────────────────────────────────────────────
 
-export function getDevAccount(name: "alice" | "bob" | "charlie"): KeyringPair {
+export function getDevAccount(name: "alice" | "bob" | "charlie"): SubstrateSigner {
   const keyring = new Keyring({ type: "sr25519" });
-  return keyring.addFromUri(`//${name.charAt(0).toUpperCase() + name.slice(1)}`);
+  const pair = keyring.addFromUri(`//${name.charAt(0).toUpperCase() + name.slice(1)}`);
+  return { type: "keypair", pair };
 }
 
-export function getAccountFromMnemonic(mnemonic: string): KeyringPair {
+export function getAccountFromMnemonic(mnemonic: string): SubstrateSigner {
   const keyring = new Keyring({ type: "sr25519" });
-  return keyring.addFromMnemonic(mnemonic);
+  const pair = keyring.addFromMnemonic(mnemonic);
+  return { type: "keypair", pair };
+}
+
+export function signerFromExtensionAccount(account: InjectedAccountWithMeta): SubstrateSigner {
+  return { type: "injected", address: account.address, name: account.meta.name };
 }
 
 // ECDSA keypair from stealth spending private key (for spending FROM stealth address)
@@ -152,17 +184,25 @@ export async function getBalance(api: ApiPromise, accountId: string): Promise<bi
 
 // ── Extrinsics ────────────────────────────────────────────────────────────────
 
-function submitTx(
+async function submitTx(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   onInBlock?: (hash: string) => void
 ): Promise<string> {
+  // Za injected signere, dohvati injector iz extenzije neposredno pre slanja
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let injectorSigner: any | undefined;
+  if (signer.type === "injected") {
+    const injector = await web3FromAddress(signer.address);
+    injectorSigner = injector.signer;
+  }
+
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let unsub: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tx.signAndSend(signer, (result: any) => {
+    const callback = (result: any) => {
       if (result.status.isInBlock) {
         const hash = result.status.asInBlock.toHex();
         onInBlock?.(hash);
@@ -177,15 +217,19 @@ function submitTx(
         unsub?.();
         reject(new Error("Transaction dropped or invalid"));
       }
-    })
-      .then((u: unknown) => { unsub = u; })
-      .catch(reject);
+    };
+
+    const sendPromise = signer.type === "keypair"
+      ? tx.signAndSend(signer.pair, callback)
+      : tx.signAndSend(signer.address, { signer: injectorSigner }, callback);
+
+    sendPromise.then((u: unknown) => { unsub = u; }).catch(reject);
   });
 }
 
 export async function registerMetaAddress(
   api: ApiPromise,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   spendingPubKey: string, // K from keys, "X.Y" format
   viewingPubKey: string,  // V from keys, "X.Y" format
   schemeId = 2901
@@ -200,7 +244,7 @@ export async function registerMetaAddress(
 
 export async function sendStealthXcm(
   api: ApiPromise,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   destParaId: number,
   stealthAddress: string,      // hex AccountId32
   amount: bigint,
@@ -223,7 +267,7 @@ export async function sendStealthXcm(
 
 export async function sendStealthAssetXcm(
   api: ApiPromise,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   assetId: number,
   destParaId: number,
   stealthAddress: string,      // hex AccountId32
@@ -255,7 +299,7 @@ export async function spendFromStealth(
   const pair = getStealthSpendingKeypair(spendingPrivKey);
   return submitTx(
     api.tx.balances.transferAllowDeath(to, amount.toString()),
-    pair
+    { type: "keypair", pair }
   );
 }
 
@@ -306,7 +350,7 @@ function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, asset
 // Uses utility.batchAll so both transfer and announcement succeed or both fail
 export async function sendStealthAsset(
   api: ApiPromise,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   assetId: number,
   stealthAddress: string,      // hex AccountId32
   amount: bigint,
@@ -337,7 +381,7 @@ export async function sendAssetFromStealth(
   amount: bigint
 ): Promise<string> {
   const pair = getStealthSpendingKeypair(spendingPrivKey);
-  return submitTx(api.tx.assets.transfer(assetId, to, amount.toString()), pair);
+  return submitTx(api.tx.assets.transfer(assetId, to, amount.toString()), { type: "keypair", pair });
 }
 
 // Fetch pallet-assets balance for a given asset ID
@@ -352,7 +396,7 @@ export async function getAssetBalance(api: ApiPromise, accountId: string, assetI
 // Deposit into gas sponsor pool (sponsor must call this before withdrawFromStealth can use them)
 export async function sponsorGas(
   api: ApiPromise,
-  signer: KeyringPair,
+  signer: SubstrateSigner,
   amount: bigint
 ): Promise<string> {
   return submitTx(api.tx.stealthAddresses.sponsorGas(amount.toString()), signer);
@@ -372,7 +416,7 @@ export async function withdrawFromStealth(
   stealthAddress: string,   // AccountId32 hex (from scan results)
   spendingPrivKey: string,  // ECDSA spending private key (used to SIGN only)
   destination: string,      // AccountId32 hex or SS58 of recipient
-  sponsorPair: KeyringPair, // Keypair with PAS + funds in GasSponsorPool (submits + pays fee)
+  sponsor: SubstrateSigner, // Signer sa PAS + sredstvima u GasSponsorPool-u (podnosi i plaća fee)
   assetId?: number,         // undefined = native PAS, number = pallet-assets asset
   amount?: bigint           // undefined = entire balance, bigint = specific amount
 ): Promise<string> {
@@ -396,10 +440,10 @@ export async function withdrawFromStealth(
       Array.from(hexToU8a(stealthAddress)), // stealth: [u8; 32]
       destination,                            // destination: AccountId
       Array.from(sig),                        // signature: [u8; 65]
-      sponsorPair.address,                    // sponsor: AccountId (must have pool funds)
+      signerAddress(sponsor),                 // sponsor: AccountId (must have pool funds)
       assetArg,                               // asset_id: Option<u32>
       amountArg                               // amount: Option<u128>
     ),
-    sponsorPair  // ← sponsor podnosi i plaća fee, ne stealth adresa
+    sponsor  // ← sponsor podnosi i plaća fee, ne stealth adresa
   );
 }
