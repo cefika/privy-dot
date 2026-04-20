@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
@@ -63,6 +63,9 @@ export default function App() {
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  // Track which EVM address has already been registered to avoid duplicate MetaMask popups
+  const registeredEvmAddress = useRef<string>("");
+
   useEffect(() => {
     configure(RPC_URL, contractAddress ?? "");
   }, []);
@@ -86,12 +89,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (address && mode === "evm") {
-      refreshBalance(address);
-      const id = setInterval(() => refreshBalance(address), 15_000);
-      return () => clearInterval(id);
-    }
-  }, [address, mode, refreshBalance]);
+    if (!address) return;
+    refreshBalance(address);
+    const id = setInterval(() => refreshBalance(address), 15_000);
+    return () => clearInterval(id);
+  }, [address, refreshBalance]);
 
   // Auto-scan u pozadini kad se konektuje acc sa keys
   useEffect(() => {
@@ -155,15 +157,21 @@ export default function App() {
   }, [subSigner, keys, sourcePara, wasmReady]);
 
   // Auto-register meta address via EVM precompile kad su keys + MetaMask signer dostupni
+  // Guard: skip if ova EVM adresa je vec registrovana u ovoj sesiji
   useEffect(() => {
     if (!signer || !keys || !wasmReady) return;
     let cancelled = false;
     (async () => {
       try {
+        const addr = await signer.getAddress();
+        if (registeredEvmAddress.current === addr.toLowerCase()) return;
         const spBytes = secp256k1ToCompressed(keys.K);
         const vpBytes = bn254ToBytes64(keys.V);
         const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
-        if (!cancelled) addToast(`Meta address registered via precompile (${hash.slice(0, 10)}…)`, "success");
+        if (!cancelled) {
+          registeredEvmAddress.current = addr.toLowerCase();
+          addToast(`Meta address registered via precompile (${hash.slice(0, 10)}…)`, "success");
+        }
       } catch (e: unknown) {
         if (!cancelled) addToast(e instanceof Error ? e.message : "Precompile registration failed", "error");
       }
@@ -377,7 +385,7 @@ export default function App() {
                     : <span className="capitalize">{devAccount}</span>}
                 </p>
                 <div className="pl-4 space-y-0.5">
-                  {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} ETH</p>}
+                  {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} PAS</p>}
                   {isXcm && subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
                   {isXcm && subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
                   {autoScanning && (

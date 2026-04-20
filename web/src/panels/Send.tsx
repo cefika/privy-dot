@@ -201,11 +201,11 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
           await announceViaPrecompile(signer, ephemeralPubkey, viewTag, stealthAccountId32);
         } catch (e) {
           // Announce greska ne ponistava send, ali obavijesti
-          toast("ETH sent but announce failed — recipient may not find it via scan", "error");
+          toast("PAS sent but announce failed — recipient may not find it via scan", "error");
         }
 
         setStep("done");
-        toast(`Sent ${amount} ETH to stealth address!`, "success");
+        toast(`Sent ${amount} PAS to stealth address!`, "success");
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Transaction failed");
