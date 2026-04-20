@@ -258,6 +258,9 @@ mod runtime {
 	#[runtime::pallet_index(52)]
 	pub type Assets = pallet_assets;
 
+	#[runtime::pallet_index(53)]
+	pub type Utility = pallet_utility;
+
 	// Smart contracts (EVM + PVM via pallet-revive)
 	#[runtime::pallet_index(90)]
 	pub type Revive = pallet_revive;
@@ -444,7 +447,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	spec_name: alloc::borrow::Cow::Borrowed("stack-template-runtime"),
 	impl_name: alloc::borrow::Cow::Borrowed("stack-template-runtime"),
 	authoring_version: 1,
-	spec_version: 3,
+	spec_version: 4,
 	impl_version: 0,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 2,

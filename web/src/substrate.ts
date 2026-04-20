@@ -221,6 +221,31 @@ export async function sendStealthXcm(
   );
 }
 
+export async function sendStealthAssetXcm(
+  api: ApiPromise,
+  signer: KeyringPair,
+  assetId: number,
+  destParaId: number,
+  stealthAddress: string,      // hex AccountId32
+  amount: bigint,
+  ephemeralPubkey: Uint8Array, // 64 bytes
+  viewTag: Uint8Array,         // 2 bytes
+  metadata: Uint8Array         // 32 bytes
+): Promise<string> {
+  return submitTx(
+    api.tx.stealthAddresses.sendStealthAssetXcm(
+      assetId,
+      destParaId,
+      stealthAddress,
+      amount.toString(),
+      Array.from(ephemeralPubkey),
+      Array.from(viewTag),
+      Array.from(metadata)
+    ),
+    signer
+  );
+}
+
 export async function spendFromStealth(
   api: ApiPromise,
   spendingPrivKey: string,
@@ -275,6 +300,32 @@ function buildWithdrawalMessage(stealthHex: string, destBytes: Uint8Array, asset
   msg.set(assetBytes, offset); offset += assetBytes.length;
   msg.set(amountBytes, offset);
   return msg;
+}
+
+// Send a pallet-assets token to a stealth address (same-chain) + announce
+// Uses utility.batchAll so both transfer and announcement succeed or both fail
+export async function sendStealthAsset(
+  api: ApiPromise,
+  signer: KeyringPair,
+  assetId: number,
+  stealthAddress: string,      // hex AccountId32
+  amount: bigint,
+  ephemeralPubkey: Uint8Array, // 64 bytes
+  viewTag: Uint8Array,         // 2 bytes
+  metadata: Uint8Array         // 32 bytes
+): Promise<string> {
+  const transferCall = api.tx.assets.transfer(
+    assetId,
+    stealthAddress,
+    amount.toString()
+  );
+  const announceCall = api.tx.stealthAddresses.announce(
+    Array.from(ephemeralPubkey),
+    Array.from(viewTag),
+    stealthAddress,
+    Array.from(metadata)
+  );
+  return submitTx(api.tx.utility.batchAll([transferCall, announceCall]), signer);
 }
 
 // Send a specific amount of a pallet-assets token directly from a stealth address

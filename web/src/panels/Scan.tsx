@@ -11,13 +11,12 @@ import {
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
-  sendAssetFromStealth,
   withdrawFromStealth,
   sponsorGas,
   getSponsorBalance,
 } from "../substrate";
 import type { KeyringPair } from "../substrate";
-import type { KeyPairs } from "../types";
+import type { KeyPairs, FoundAddress } from "../types";
 
 interface Props {
   mode: "evm" | "xcm";
@@ -25,16 +24,9 @@ interface Props {
   sourcePara: number;
   destPara: number;
   subSigner: KeyringPair | null;
+  found: FoundAddress[];
+  setFound: React.Dispatch<React.SetStateAction<FoundAddress[]>>;
   toast: (msg: string, type?: "success" | "error") => void;
-}
-
-interface FoundAddress {
-  stealthAddress: string;
-  spendingPrivKey: string;
-  spendingPubKey: string;
-  balance: string;
-  balancePlanck?: bigint;
-  usdcBalance?: bigint;
 }
 
 interface SpendModal {
@@ -49,10 +41,9 @@ interface SpendModal {
 
 const SCHEME_ID = 2901n;
 
-export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, toast }: Props) {
+export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
   const [fromBlock, setFromBlock] = useState("0");
-  const [found, setFound] = useState<FoundAddress[]>([]);
   const [progress, setProgress] = useState("");
   const [modal, setModal] = useState<SpendModal | null>(null);
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});

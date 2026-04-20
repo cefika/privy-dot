@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Send as SendIcon, ArrowRight, CheckCircle, Loader, ClipboardPaste } from "lucide-react";
 import { ethers } from "ethers";
 import { wasmApi } from "../wasm";
@@ -6,8 +6,12 @@ import { getContract, deriveStealthAddress } from "../chain";
 import {
   getApi,
   sendStealthXcm,
+  sendStealthAsset,
+  sendStealthAssetXcm,
   deriveSubstrateStealthAddress,
   rToBytes64,
+  getBalance,
+  getAssetBalance,
 } from "../substrate";
 import type { KeyringPair } from "../substrate";
 
@@ -21,6 +25,7 @@ interface Props {
 }
 
 type Step = "idle" | "resolved" | "sending" | "done";
+type TokenType = "pas" | "usdc";
 
 interface Resolved {
   K: string; V: string;
@@ -36,8 +41,43 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState("");
+  const [tokenType, setTokenType] = useState<TokenType>("pas");
+  const [balance, setBalance] = useState<string | null>(null);
 
   const isXcm = mode === "xcm";
+
+  // Fetch balance kad se promeni signer, token tip ili para
+  useEffect(() => {
+    setBalance(null);
+    if (!subSigner && !signer) return;
+    let cancelled = false;
+
+    async function fetchBalance() {
+      try {
+        if (isXcm && subSigner) {
+          const paraId = tokenType === "usdc" && sourcePara !== destPara ? sourcePara : (tokenType === "usdc" ? destPara : sourcePara);
+          const api = await getApi(paraId);
+          if (tokenType === "usdc") {
+            const raw = await getAssetBalance(api, subSigner.address, 1);
+            if (!cancelled) setBalance((Number(raw) / 1_000_000).toFixed(2) + " USDC");
+          } else {
+            const raw = await getBalance(api, subSigner.address);
+            if (!cancelled) setBalance((Number(raw) / 1e12).toFixed(4) + " PAS");
+          }
+        } else if (!isXcm && signer) {
+          const addr = await signer.getAddress();
+          const provider = (signer as any).provider;
+          if (provider) {
+            const raw = await provider.getBalance(addr);
+            if (!cancelled) setBalance((Number(raw) / 1e18).toFixed(4) + " PAS");
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    fetchBalance();
+    return () => { cancelled = true; };
+  }, [subSigner, signer, tokenType, sourcePara, destPara, isXcm]);
 
   async function generate() {
     setError("");
@@ -67,8 +107,6 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
       if (isXcm) {
         if (!subSigner) throw new Error("Connect a Substrate account first");
 
-        const api = await getApi(sourcePara);
-
         // Encode ephemeral pubkey R → 64 bytes
         const ephemeralPubkey = rToBytes64(resolved.ephemeralKey);
 
@@ -80,22 +118,59 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
         // Metadata: 32 zero bytes
         const metadata = new Uint8Array(32);
 
-        // Amount in planck (12 decimals)
-        const amountPlanck = BigInt(Math.round(parseFloat(amount) * 1_000_000_000_000));
+        let hash: string;
 
-        const hash = await sendStealthXcm(
-          api,
-          subSigner,
-          destPara,
-          resolved.stealthAddress,
-          amountPlanck,
-          ephemeralPubkey,
-          viewTag,
-          metadata
-        );
+        if (tokenType === "usdc") {
+          const amountUsdc = BigInt(Math.round(parseFloat(amount) * 1_000_000)); // 6 decimals
+          if (sourcePara !== destPara) {
+            // Cross-chain USDC via XCM Transact (burn on source, mint on dest)
+            const api = await getApi(sourcePara);
+            hash = await sendStealthAssetXcm(
+              api,
+              subSigner,
+              1, // asset ID 1 = USDC
+              destPara,
+              resolved.stealthAddress,
+              amountUsdc,
+              ephemeralPubkey,
+              viewTag,
+              metadata
+            );
+            toast(`Sent ${amount} USDC via XCM to stealth address!`, "success");
+          } else {
+            // Same-chain USDC: assets.transfer + announce (batchAll)
+            const api = await getApi(destPara);
+            hash = await sendStealthAsset(
+              api,
+              subSigner,
+              1,
+              resolved.stealthAddress,
+              amountUsdc,
+              ephemeralPubkey,
+              viewTag,
+              metadata
+            );
+            toast(`Sent ${amount} USDC to stealth address!`, "success");
+          }
+        } else {
+          // XCM PAS: cross-chain teleport
+          const api = await getApi(sourcePara);
+          const amountPlanck = BigInt(Math.round(parseFloat(amount) * 1_000_000_000_000));
+          hash = await sendStealthXcm(
+            api,
+            subSigner,
+            destPara,
+            resolved.stealthAddress,
+            amountPlanck,
+            ephemeralPubkey,
+            viewTag,
+            metadata
+          );
+          toast(`Sent ${amount} PAS via XCM!`, "success");
+        }
+
         setTxHash(hash);
         setStep("done");
-        toast(`Sent ${amount} tokens via XCM!`, "success");
 
       } else {
         if (!signer) throw new Error("Connect a wallet first");
@@ -119,7 +194,7 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
     }
   }
 
-  function reset() { setStep("idle"); setResolved(null); setTxHash(""); setMetaInput(""); setError(""); }
+  function reset() { setStep("idle"); setResolved(null); setTxHash(""); setMetaInput(""); setError(""); setAmount("1"); }
 
   if (step === "done") {
     return (
@@ -132,7 +207,7 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
           <CheckCircle size={48} className="text-green-400 mx-auto mb-4" />
           <h3 className="text-xl font-semibold text-zinc-100 mb-2">Transfer Complete</h3>
           <p className="text-zinc-400 mb-4">
-            <span className="font-semibold text-zinc-200">{amount} {isXcm ? "tokens" : "PAS"}</span> sent to{" "}
+            <span className="font-semibold text-zinc-200">{amount} {!isXcm ? "PAS" : tokenType === "usdc" ? "USDC" : "PAS"}</span> sent to{" "}
             <span className="font-mono text-violet-400">{resolved!.stealthAddress.slice(0, 10)}…</span>
           </p>
           <div className="bg-zinc-800 rounded-lg p-3 mb-4">
@@ -165,6 +240,50 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
       {!canSend && (
         <div className="rounded-lg bg-amber-950/40 border border-amber-700/40 px-4 py-3 text-amber-300 text-sm">
           {isXcm ? "Connect a dev account (Alice/Bob/Charlie) in the sidebar." : "Connect a wallet in the sidebar to send transactions."}
+        </div>
+      )}
+      {canSend && balance !== null && (
+        <div className="rounded-lg bg-zinc-800/60 border border-zinc-700/40 px-4 py-2.5 flex items-center justify-between">
+          <span className="text-xs text-zinc-500">Your balance</span>
+          <span className="text-sm font-semibold text-zinc-200">{balance}</span>
+        </div>
+      )}
+
+      {/* Token selector — only in XCM mode */}
+      {isXcm && (
+        <div className="card">
+          <label className="label mb-2 block">Token</label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setTokenType("pas"); setStep("idle"); setResolved(null); setAmount("1"); }}
+              className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${tokenType === "pas" ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+            >
+              <div className="font-semibold">PAS</div>
+              <div className="text-xs text-zinc-500">XCM cross-chain</div>
+            </button>
+            <button
+              onClick={() => { setTokenType("usdc"); setStep("idle"); setResolved(null); setAmount("1"); }}
+              className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${tokenType === "usdc" ? "border-blue-500 bg-blue-950/50 text-blue-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+            >
+              <div className="font-semibold">USDC</div>
+              <div className="text-xs text-zinc-500">{sourcePara !== destPara ? "XCM cross-chain" : `Same-chain (Para ${destPara})`}</div>
+            </button>
+          </div>
+          {tokenType === "usdc" && sourcePara !== destPara && (
+            <p className="text-xs text-zinc-500 mt-2">
+              Spaljuje USDC na Para {sourcePara}, mintuje na stealth adresu na Para {destPara} via XCM — announcement na Para {destPara}.
+            </p>
+          )}
+          {tokenType === "usdc" && sourcePara === destPara && (
+            <p className="text-xs text-zinc-500 mt-2">
+              Šalje USDC (asset ID 1) na stealth adresu na Para {destPara} i kreira announcement — primalac može da skenira.
+            </p>
+          )}
+          {tokenType === "pas" && (
+            <p className="text-xs text-zinc-500 mt-2">
+              Teleportuje PAS sa Para {sourcePara} na stealth adresu na Para {destPara} via XCM.
+            </p>
+          )}
         </div>
       )}
 
@@ -233,11 +352,18 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
               placeholder="0.0"
               min="0" step="0.1"
             />
-            <span className="text-zinc-400 font-medium">{isXcm ? "tokens" : "PAS"}</span>
+            <span className="text-zinc-400 font-medium">
+              {!isXcm ? "PAS" : tokenType === "usdc" ? "USDC" : "PAS"}
+            </span>
           </div>
-          {isXcm && (
+          {isXcm && tokenType === "pas" && (
             <p className="text-xs text-zinc-500 mt-2">
-              1 token = 10¹² planck. Min recommended: 2 (to cover XCM fees).
+              1 PAS = 10¹² planck. Min preporučeno: 2 (da pokrije XCM fees).
+            </p>
+          )}
+          {isXcm && tokenType === "usdc" && (
+            <p className="text-xs text-zinc-500 mt-2">
+              USDC ima 6 decimala. Npr. 5 = 5.000000 USDC.
             </p>
           )}
           <button
@@ -246,9 +372,9 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
             className="btn-primary w-full mt-4 flex items-center justify-center gap-2"
           >
             {step === "sending" ? (
-              <><Loader size={14} className="animate-spin" /> {isXcm ? "Sending XCM…" : "Sending…"}</>
+              <><Loader size={14} className="animate-spin" /> {isXcm && tokenType === "pas" ? "Sending XCM…" : "Sending…"}</>
             ) : (
-              <><SendIcon size={14} /> Send {amount} <ArrowRight size={12} /> {resolved.stealthAddress.slice(0, 8)}…</>
+              <><SendIcon size={14} /> Send {amount} {!isXcm ? "PAS" : tokenType === "usdc" ? "USDC" : "PAS"} <ArrowRight size={12} /> {resolved.stealthAddress.slice(0, 8)}…</>
             )}
           </button>
           {step !== "sending" && (
@@ -265,13 +391,25 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
         <div className="space-y-2 text-xs text-zinc-500">
           <p>→ Recipient shares their meta address (K:::V public keys)</p>
           <p>→ You generate a fresh one-time stealth address using their keys</p>
-          {isXcm
-            ? <>
-                <p>→ Funds are sent via XCM from Para {sourcePara} to the stealth address on Para {destPara}</p>
-                <p>→ Announcement is stored on Para {sourcePara} (scan there to discover payments)</p>
-              </>
-            : <p>→ Funds arrive at an address nobody can link to the recipient</p>
-          }
+          {isXcm && tokenType === "pas" && (
+            <>
+              <p>→ PAS sent via XCM from Para {sourcePara} to stealth address on Para {destPara}</p>
+              <p>→ Announcement stored on Para {sourcePara} — scan Para {sourcePara}→{destPara} to find it</p>
+            </>
+          )}
+          {isXcm && tokenType === "usdc" && sourcePara !== destPara && (
+            <>
+              <p>→ USDC burned on Para {sourcePara}, minted on stealth address on Para {destPara} via XCM</p>
+              <p>→ Announcement stored on Para {destPara} — scan Para {destPara}→{destPara} to find it</p>
+            </>
+          )}
+          {isXcm && tokenType === "usdc" && sourcePara === destPara && (
+            <>
+              <p>→ USDC transferred to stealth address on Para {destPara} (same-chain)</p>
+              <p>→ Announcement stored on Para {destPara} — scan Para {destPara}→{destPara} to find it</p>
+            </>
+          )}
+          {!isXcm && <p>→ Funds arrive at an address nobody can link to the recipient</p>}
           <p>→ Only the recipient can discover and spend (using Scan)</p>
         </div>
       </div>
