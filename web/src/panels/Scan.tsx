@@ -199,9 +199,21 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           if (assetId !== undefined) {
             // USDC: 6 decimals
             withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+            const maxUsdc = modal.addr.usdcBalance ?? 0n;
+            if (withdrawAmount > maxUsdc) {
+              toast(`Insufficient balance — max ${(Number(maxUsdc) / 1_000_000).toFixed(2)} USDC`, "error");
+              setModal(m => m ? { ...m, loading: false } : m);
+              return;
+            }
           } else {
             // PAS: 12 decimals
             withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+            const maxPas = modal.addr.balancePlanck ?? 0n;
+            if (withdrawAmount > maxPas) {
+              toast(`Insufficient balance — max ${(Number(maxPas) / 1e12).toFixed(4)} PAS`, "error");
+              setModal(m => m ? { ...m, loading: false } : m);
+              return;
+            }
           }
         }
         hash = await withdrawFromStealth(
@@ -209,7 +221,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           modal.addr.stealthAddress,
           modal.addr.spendingPrivKey,
           modal.to,
-          subSigner.address,
+          subSigner,
           assetId,
           withdrawAmount
         );
@@ -362,7 +374,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <button
                 onClick={() => setModal({ addr, to: "", amount: "", loading: false, txHash: "", useWithdraw: false, assetId: "" })}
                 className="btn-primary w-full mt-4 flex items-center justify-center gap-2"
-                disabled={addr.balance === "0.0000"}
+                disabled={addr.balance === "0.0000" && (addr.usdcBalance ?? 0n) === 0n}
               >
                 <Send size={14} /> Spend / Withdraw
               </button>

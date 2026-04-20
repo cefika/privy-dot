@@ -1,28 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info } from "lucide-react";
-import { initWasm } from "./wasm";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
+import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll } from "./substrate";
+import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
 import type { KeyringPair } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
-import ReceivePanel from "./panels/Register";
 
 const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? "http://127.0.0.1:8545";
 
-type Tab = "keys" | "send" | "scan" | "register";
+type Tab = "keys" | "send" | "scan";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
 const NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "keys",     label: "My Keys",  Icon: Key      },
-  { id: "send",     label: "Send",     Icon: Send     },
-  { id: "scan",     label: "Scan",     Icon: Radar    },
-  { id: "register", label: "Receive",  Icon: Download },
+  { id: "keys", label: "My Keys", Icon: Key  },
+  { id: "send", label: "Send",    Icon: Send },
+  { id: "scan", label: "Scan",    Icon: Radar },
 ];
 
 function keysLSKey(addr: string) { return `privy-keys-${addr.toLowerCase()}`; }
@@ -55,6 +53,9 @@ export default function App() {
   const [showMnemonicInput, setShowMnemonicInput] = useState(false);
   const [sourcePara, setSourcePara] = useState<number>(1000);
   const [destPara, setDestPara] = useState<number>(2000);
+  const [subPas, setSubPas] = useState<string | null>(null);
+  const [subUsdc, setSubUsdc] = useState<string | null>(null);
+  const [autoScanning, setAutoScanning] = useState(false);
 
   const [foundAddresses, setFoundAddresses] = useState<FoundAddress[]>([]);
 
@@ -89,6 +90,85 @@ export default function App() {
       return () => clearInterval(id);
     }
   }, [address, mode, refreshBalance]);
+
+  // Auto-scan u pozadini kad se konektuje acc sa keys
+  useEffect(() => {
+    if (!subSigner || !keys || !wasmReady) return;
+    let cancelled = false;
+    setAutoScanning(true);
+    (async () => {
+      try {
+        const srcApi = await getApi(sourcePara);
+        const announcements = await fetchAnnouncements(srcApi);
+        if (announcements.length === 0 || cancelled) return;
+        const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
+        const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
+        const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
+        if (cancelled) return;
+        const destApi = await getApi(destPara);
+        const matches: FoundAddress[] = [];
+        for (let i = 0; i < result.spendingPrivKeys.length; i++) {
+          const privKey = result.spendingPrivKeys[i];
+          const pubKey = result.spendingPubKeys[i];
+          if (!privKey || privKey === "0x" || !pubKey) continue;
+          const stealthAddress = deriveSubstrateStealthAddress(pubKey);
+          const balPlanck = await getBalance(destApi, stealthAddress);
+          const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
+          if (balPlanck === 0n && usdcBalance === 0n) continue;
+          matches.push({
+            stealthAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: (Number(balPlanck) / 1e12).toFixed(4),
+            balancePlanck: balPlanck,
+            usdcBalance,
+          });
+        }
+        if (!cancelled) setFoundAddresses(matches);
+      } catch {}
+      finally { setAutoScanning(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, keys, sourcePara, destPara, wasmReady]);
+
+  // Auto-register meta address kad su keys + subSigner dostupni
+  useEffect(() => {
+    if (!subSigner || !keys || !wasmReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = await getApi(sourcePara);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existing = await (api.query.stealthAddresses as any).stealthMetaAddresses(subSigner.address);
+        if (cancelled) return;
+        if (existing.isNone || !existing.isSome) {
+          await registerMetaAddress(api, subSigner, keys.K, keys.V);
+          if (!cancelled) addToast("Meta address registered on-chain", "success");
+        }
+      } catch (e: unknown) {
+        if (!cancelled) addToast(e instanceof Error ? e.message : "Registration failed", "error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, keys, sourcePara, wasmReady]);
+
+  useEffect(() => {
+    setSubPas(null); setSubUsdc(null);
+    if (!subSigner) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = await getApi(sourcePara);
+        const pas = await getBalance(api, subSigner.address);
+        const usdc = await getAssetBalance(api, subSigner.address, 1);
+        if (!cancelled) {
+          setSubPas((Number(pas) / 1e12).toFixed(4));
+          setSubUsdc((Number(usdc) / 1_000_000).toFixed(2));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, sourcePara]);
 
   function onKeysChange(k: KeyPairs) {
     setKeys(k);
@@ -152,7 +232,7 @@ export default function App() {
 
   function disconnectXcm() {
     setSubSigner(null); setSubAddress(""); setKeys(null);
-    setFoundAddresses([]);
+    setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
     disconnectAll();
   }
 
@@ -287,6 +367,15 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-xs text-text-muted pl-4 capitalize">{devAccount}</p>
+                  <div className="pl-4 space-y-0.5">
+                    {subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
+                    {subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
+                    {autoScanning && (
+                      <p className="text-xs text-zinc-500 flex items-center gap-1">
+                        <Loader size={10} className="animate-spin" /> scanning…
+                      </p>
+                    )}
+                  </div>
                   {foundAddresses.length > 0 && (() => {
                     const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
                     const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
@@ -389,10 +478,9 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys"     && <KeysPanel    keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
-          {tab === "send"     && <SendPanel    mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan"     && <ScanPanel    mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
-          {tab === "register" && <ReceivePanel mode={mode} keys={keys} subSigner={subSigner} sourcePara={sourcePara} />}
+          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
+          {tab === "send" && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
         </main>
       </div>
 

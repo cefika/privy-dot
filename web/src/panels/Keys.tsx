@@ -24,6 +24,23 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
+function MetaCopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+        copied
+          ? "border-green-600 bg-green-950/40 text-green-400"
+          : "border-violet-600 bg-violet-950/30 text-violet-300 hover:bg-violet-950/50"
+      }`}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {copied ? "Copied!" : "Copy meta address"}
+    </button>
+  );
+}
+
 function KeyField({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
   const [show, setShow] = useState(false);
   const display = secret && !show ? "••••••••••••••••••••••••••••••••" : (value.length > 60 ? short(value) : value);
@@ -110,6 +127,19 @@ export default function KeysPanel({ keys, address, onKeysChange, toast }: Props)
         </div>
       ) : (
         <div className="grid gap-4">
+          {/* Meta Address — prominentno na vrhu */}
+          <div className="card border-violet-700/40 bg-violet-950/10">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-2 rounded-full bg-violet-400" />
+              <h3 className="font-semibold text-zinc-100">Your Meta Address</h3>
+              <span className="text-xs text-zinc-500 ml-auto">Share this to receive payments</span>
+            </div>
+            <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 mb-3">
+              <p className="font-mono text-xs text-zinc-300 break-all leading-relaxed">{keys.K}:::{keys.V}</p>
+            </div>
+            <MetaCopyBtn text={`${keys.K}:::${keys.V}`} />
+          </div>
+
           {/* Spending Key Card */}
           <div className="card">
             <div className="flex items-center gap-2 mb-4">
@@ -134,15 +164,6 @@ export default function KeysPanel({ keys, address, onKeysChange, toast }: Props)
               <KeyField label="Public Key (V)" value={keys.V} />
               <KeyField label="Private Key (v)" value={keys.v} secret />
             </div>
-          </div>
-
-          {/* Meta Address */}
-          <div className="card bg-zinc-900/50">
-            <div className="flex items-center gap-2 mb-3">
-              <h3 className="font-semibold text-zinc-300 text-sm">Meta Address</h3>
-              <span className="text-xs text-zinc-600">(share this publicly so people can send to you)</span>
-            </div>
-            <KeyField label="K:::V" value={`${keys.K}:::${keys.V}`} />
           </div>
 
           {/* Actions */}
