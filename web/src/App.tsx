@@ -4,7 +4,7 @@ import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, L
 import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
+import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress } from "./substrate";
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
@@ -49,7 +49,6 @@ export default function App() {
   const [subSigner, setSubSigner] = useState<SubstrateSigner | null>(null);
   const [subAddress, setSubAddress] = useState("");
   const [devAccount, setDevAccount] = useState<DevAccount>("alice");
-  const [mnemonicInput, setMnemonicInput] = useState("");
   const [showMnemonicInput, setShowMnemonicInput] = useState(false);
   const [extensionAccounts, setExtensionAccounts] = useState<InjectedAccountWithMeta[]>([]);
   const [showWalletModal, setShowWalletModal] = useState(false);
@@ -223,18 +222,6 @@ export default function App() {
     addToast(`Connected as ${name.charAt(0).toUpperCase() + name.slice(1)}`, "success");
   }
 
-  function connectMnemonic() {
-    try {
-      const s = getAccountFromMnemonic(mnemonicInput.trim());
-      const addr = signerAddress(s);
-      setSubSigner(s);
-      setSubAddress(addr);
-      setMnemonicInput(""); setShowMnemonicInput(false);
-      setKeys(loadKeys(addr));
-      addToast("Connected via mnemonic", "success");
-    } catch { addToast("Invalid mnemonic", "error"); }
-  }
-
   async function openWalletModal() {
     setWalletLoading(true);
     try {
@@ -395,7 +382,12 @@ export default function App() {
                       {connectedAddress.slice(0, 6)}…{connectedAddress.slice(-4)}
                     </span>
                   </div>
-                  <p className="text-xs text-text-muted pl-4 capitalize">{devAccount}</p>
+                  <p className="text-xs text-text-muted pl-4 truncate">
+                    {subSigner?.type === "injected"
+                      ? (subSigner.name ?? "Extension account")
+                      : <span className="capitalize">{devAccount}</span>
+                    }
+                  </p>
                   <div className="pl-4 space-y-0.5">
                     {subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
                     {subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
@@ -426,36 +418,36 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-2 px-1">
-                  <p className="text-xs text-text-muted px-1">Dev account:</p>
-                  <div className="flex flex-col gap-1">
-                    {(["alice", "bob", "charlie"] as DevAccount[]).map(name => (
-                      <button
-                        key={name}
-                        onClick={() => connectDevAccount(name)}
-                        className="w-full text-left text-xs btn-secondary py-1.5 px-2 capitalize"
-                      >
-                        {name}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Primary: extension wallet */}
+                  <button
+                    onClick={openWalletModal}
+                    disabled={walletLoading}
+                    className="w-full flex items-center justify-center gap-1.5 text-xs btn-primary py-2"
+                  >
+                    {walletLoading
+                      ? <><Loader size={11} className="animate-spin" /> Connecting…</>
+                      : <><Wallet size={12} /> Connect Wallet</>
+                    }
+                  </button>
+
+                  {/* Dev accounts (for local testing) */}
                   <button
                     onClick={() => setShowMnemonicInput(v => !v)}
-                    className="w-full text-xs text-text-muted hover:text-text-secondary text-center py-1"
+                    className="w-full text-xs text-text-muted hover:text-text-secondary text-center py-0.5"
                   >
-                    Mnemonic…
+                    Dev accounts…
                   </button>
                   {showMnemonicInput && (
-                    <div className="space-y-1.5">
-                      <textarea
-                        value={mnemonicInput}
-                        onChange={e => setMnemonicInput(e.target.value)}
-                        className="input-field w-full text-xs py-1.5 h-16 resize-none"
-                        placeholder="word1 word2 … word12"
-                      />
-                      <div className="flex gap-1">
-                        <button onClick={connectMnemonic} className="btn-primary text-xs py-1 px-2 flex-1">Connect</button>
-                        <button onClick={() => setShowMnemonicInput(false)} className="btn-secondary text-xs py-1 px-2">✕</button>
-                      </div>
+                    <div className="flex flex-col gap-1">
+                      {(["alice", "bob", "charlie"] as DevAccount[]).map(name => (
+                        <button
+                          key={name}
+                          onClick={() => { connectDevAccount(name); setShowMnemonicInput(false); }}
+                          className="w-full text-left text-xs btn-secondary py-1.5 px-2 capitalize"
+                        >
+                          {name}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -512,6 +504,47 @@ export default function App() {
           {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
         </main>
       </div>
+
+      {/* Wallet account picker modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowWalletModal(false)} />
+          <div className="relative bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+              <h2 className="text-sm font-semibold text-zinc-100">Select account</h2>
+              <button onClick={() => setShowWalletModal(false)} className="text-zinc-500 hover:text-zinc-300">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-3 max-h-80 overflow-y-auto space-y-1">
+              {extensionAccounts.length === 0 ? (
+                <p className="text-xs text-zinc-500 text-center py-6">No accounts found in your wallet extension.</p>
+              ) : (
+                extensionAccounts.map(account => (
+                  <button
+                    key={account.address}
+                    onClick={() => connectExtensionAccount(account)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 transition-colors text-left"
+                  >
+                    <div className="w-7 h-7 rounded-full bg-violet-900/60 border border-violet-700/40 flex items-center justify-center shrink-0">
+                      <span className="text-xs text-violet-300 font-semibold">
+                        {(account.meta.name ?? "?")[0].toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-zinc-200 truncate">{account.meta.name ?? "Account"}</p>
+                      <p className="text-xs font-mono text-zinc-500 truncate">{account.address.slice(0, 12)}…{account.address.slice(-6)}</p>
+                    </div>
+                    {account.meta.source && (
+                      <span className="text-xs text-zinc-600 shrink-0">{account.meta.source}</span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toasts */}
       <div className="fixed bottom-6 right-6 space-y-2 z-50">
