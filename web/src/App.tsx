@@ -126,7 +126,7 @@ export default function App() {
         }
         if (!cancelled) setFoundAddresses(matches);
       } catch {}
-      finally { if (!cancelled) setAutoScanning(false); }
+      finally { setAutoScanning(false); }
     })();
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, destPara, wasmReady]);
