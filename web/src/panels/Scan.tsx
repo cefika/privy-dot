@@ -199,9 +199,21 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           if (assetId !== undefined) {
             // USDC: 6 decimals
             withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+            const maxUsdc = modal.addr.usdcBalance ?? 0n;
+            if (withdrawAmount > maxUsdc) {
+              toast(`Insufficient balance — max ${(Number(maxUsdc) / 1_000_000).toFixed(2)} USDC`, "error");
+              setModal(m => m ? { ...m, loading: false } : m);
+              return;
+            }
           } else {
             // PAS: 12 decimals
             withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+            const maxPas = modal.addr.balancePlanck ?? 0n;
+            if (withdrawAmount > maxPas) {
+              toast(`Insufficient balance — max ${(Number(maxPas) / 1e12).toFixed(4)} PAS`, "error");
+              setModal(m => m ? { ...m, loading: false } : m);
+              return;
+            }
           }
         }
         hash = await withdrawFromStealth(
