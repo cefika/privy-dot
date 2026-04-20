@@ -4,7 +4,7 @@ import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircl
 import { initWasm } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
-import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll } from "./substrate";
+import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi } from "./substrate";
 import type { KeyringPair } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
@@ -55,6 +55,8 @@ export default function App() {
   const [showMnemonicInput, setShowMnemonicInput] = useState(false);
   const [sourcePara, setSourcePara] = useState<number>(1000);
   const [destPara, setDestPara] = useState<number>(2000);
+  const [subPas, setSubPas] = useState<string | null>(null);
+  const [subUsdc, setSubUsdc] = useState<string | null>(null);
 
   const [foundAddresses, setFoundAddresses] = useState<FoundAddress[]>([]);
 
@@ -89,6 +91,24 @@ export default function App() {
       return () => clearInterval(id);
     }
   }, [address, mode, refreshBalance]);
+
+  useEffect(() => {
+    setSubPas(null); setSubUsdc(null);
+    if (!subSigner) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = await getApi(sourcePara);
+        const pas = await getBalance(api, subSigner.address);
+        const usdc = await getAssetBalance(api, subSigner.address, 1);
+        if (!cancelled) {
+          setSubPas((Number(pas) / 1e12).toFixed(4));
+          setSubUsdc((Number(usdc) / 1_000_000).toFixed(2));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [subSigner, sourcePara]);
 
   function onKeysChange(k: KeyPairs) {
     setKeys(k);
@@ -152,7 +172,7 @@ export default function App() {
 
   function disconnectXcm() {
     setSubSigner(null); setSubAddress(""); setKeys(null);
-    setFoundAddresses([]);
+    setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
     disconnectAll();
   }
 
@@ -287,6 +307,10 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-xs text-text-muted pl-4 capitalize">{devAccount}</p>
+                  <div className="pl-4 space-y-0.5">
+                    {subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
+                    {subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
+                  </div>
                   {foundAddresses.length > 0 && (() => {
                     const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
                     const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
