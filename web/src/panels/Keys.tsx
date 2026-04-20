@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload } from "lucide-react";
+import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload, Link } from "lucide-react";
 import type { KeyPairs } from "../types";
 import { wasmApi } from "../wasm";
 
@@ -8,6 +8,7 @@ interface Props {
   address: string;
   onKeysChange: (k: KeyPairs) => void;
   toast: (msg: string, type?: "success" | "error") => void;
+  onRegisterEvm?: () => Promise<void>;
 }
 
 function short(s: string) { return s.slice(0, 18) + "…" + s.slice(-6); }
@@ -62,11 +63,18 @@ function KeyField({ label, value, secret }: { label: string; value: string; secr
   );
 }
 
-export default function KeysPanel({ keys, address, onKeysChange, toast }: Props) {
+export default function KeysPanel({ keys, address, onKeysChange, toast, onRegisterEvm }: Props) {
   const [importMode, setImportMode] = useState(false);
   const [importK, setImportK] = useState("");
   const [importV, setImportV] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registering, setRegistering] = useState(false);
+
+  async function handleRegister() {
+    if (!onRegisterEvm) return;
+    setRegistering(true);
+    try { await onRegisterEvm(); } finally { setRegistering(false); }
+  }
 
   async function generate() {
     if (keys && !confirm("Generate new keys? Current keys will be replaced!")) return;
@@ -137,7 +145,24 @@ export default function KeysPanel({ keys, address, onKeysChange, toast }: Props)
             <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 mb-3">
               <p className="font-mono text-xs text-zinc-300 break-all leading-relaxed">{keys.K}:::{keys.V}</p>
             </div>
-            <MetaCopyBtn text={`${keys.K}:::${keys.V}`} />
+            <div className="flex gap-2 flex-wrap">
+              <MetaCopyBtn text={`${keys.K}:::${keys.V}`} />
+              {onRegisterEvm && (
+                <button
+                  onClick={handleRegister}
+                  disabled={registering}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-emerald-700 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-950/50 transition-all disabled:opacity-50"
+                >
+                  <Link size={14} />
+                  {registering ? "Registering…" : "Register on-chain (EVM)"}
+                </button>
+              )}
+            </div>
+            {onRegisterEvm && (
+              <p className="text-xs text-zinc-500 mt-2">
+                Registracija zahteva mali gas fee u PAS. Nije obavezna — možeš deliti meta address ručno (Copy dugme iznad).
+              </p>
+            )}
           </div>
 
           {/* Spending Key Card */}

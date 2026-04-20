@@ -127,7 +127,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
   async function scanEvm() {
     if (!keys) return;
-    setScanning(true); setFound([]); setProgress("Fetching announcements from pallet (Para 1000)…");
+    setScanning(true); setFound([]); setProgress("Fetching announcements from pallet…");
     try {
       // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
       const api = await getApi(sourcePara);
@@ -151,21 +151,43 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
       const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
 
+      // Poseban API za destPara — XCM transferi deponuju pare tamo, ne na sourcePara
+      const destApi = sourcePara !== destPara ? await getApi(destPara) : api;
+
       const matches: FoundAddress[] = [];
       for (let i = 0; i < result.spendingPrivKeys.length; i++) {
         const privKey = result.spendingPrivKeys[i];
         const pubKey = result.spendingPubKeys[i];
         if (!privKey || privKey === "0x" || !pubKey) continue;
-        // EVM stealth adresa je H160
-        const stealthAddress = deriveStealthAddress(pubKey);
-        const raw = await provider.getBalance(stealthAddress);
-        if (raw === 0n) continue;
-        matches.push({
-          stealthAddress,
-          spendingPrivKey: privKey,
-          spendingPubKey: pubKey,
-          balance: parseFloat(ethers.formatEther(raw)).toFixed(4),
-        });
+
+        // Provjeri EVM balans (H160 adresa — primljeno EVM sendom na Para 1000)
+        const evmAddress = deriveStealthAddress(pubKey);
+        const evmRaw = await provider.getBalance(evmAddress);
+        if (evmRaw > 0n) {
+          matches.push({
+            stealthAddress: evmAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: parseFloat(ethers.formatEther(evmRaw)).toFixed(4),
+            addressType: "evm",
+          });
+        }
+
+        // Provjeri Substrate balans na DEST parachanu (XCM send ide sourcePara → destPara)
+        const subAddress = deriveSubstrateStealthAddress(pubKey);
+        const subBal = await getBalance(destApi, subAddress);
+        const subUsdc = await getAssetBalance(destApi, subAddress, 1);
+        if (subBal > 0n || subUsdc > 0n) {
+          matches.push({
+            stealthAddress: subAddress,
+            spendingPrivKey: privKey,
+            spendingPubKey: pubKey,
+            balance: (Number(subBal) / 1e12).toFixed(4),
+            balancePlanck: subBal,
+            usdcBalance: subUsdc,
+            addressType: "substrate",
+          });
+        }
       }
 
       setFound(matches);
@@ -257,15 +279,33 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     if (!modal) return;
     setModal(m => m ? { ...m, loading: true } : m);
     try {
-      const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
-      const tx = await spendSigner.sendTransaction({ to: modal.to, value: ethers.parseEther(modal.amount) });
-      setModal(m => m ? { ...m, txHash: tx.hash } : m);
-      await tx.wait();
+      let txHash: string;
+
+      if (modal.addr.addressType === "substrate") {
+        // Pare su na Substrate strani (poslate XCM-om) — trošimo Substrate txom
+        const api = await getApi(sourcePara);
+        const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+        txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+        const newBal = await getBalance(api, modal.addr.stealthAddress);
+        setFound(f => f.map(a =>
+          a.stealthAddress === modal.addr.stealthAddress
+            ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
+            : a
+        ));
+      } else {
+        // Pare su na EVM strani — standardni EVM send
+        const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
+        const tx = await spendSigner.sendTransaction({ to: modal.to, value: ethers.parseEther(modal.amount) });
+        txHash = tx.hash;
+        await tx.wait();
+        const raw = await provider.getBalance(modal.addr.stealthAddress);
+        setFound(f => f.map(a =>
+          a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
+        ));
+      }
+
+      setModal(m => m ? { ...m, txHash } : m);
       toast("Spent successfully!", "success");
-      const raw = await provider.getBalance(modal.addr.stealthAddress);
-      setFound(f => f.map(a =>
-        a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
-      ));
       setModal(null);
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : "Spend failed", "error");
@@ -344,7 +384,11 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-2 h-2 rounded-full bg-emerald-400" />
                     <span className="text-xs text-zinc-500">
-                      {isXcm ? `Stealth AccountId32 (Para ${destPara})` : "Stealth Address"}
+                      {isXcm
+                        ? `Stealth AccountId32 (Para ${destPara})`
+                        : addr.addressType === "substrate"
+                          ? "Stealth AccountId32 (primljeno via XCM)"
+                          : "Stealth EVM adresa"}
                     </span>
                   </div>
                   <p className="font-mono text-sm text-zinc-100 break-all">{addr.stealthAddress}</p>

@@ -104,9 +104,48 @@ export function deriveStealthAddress(spendingPubKey: string): string {
   return ethers.computeAddress(pub);
 }
 
+// Chain ID lokalnog zombieneta (eth_chainId vratio 0x190f1b45 = 420420421)
+// Za produkciju (Paseo testnet) override-uj VITE_CHAIN_ID u .env
+const EXPECTED_CHAIN_ID: number = parseInt(import.meta.env.VITE_CHAIN_ID ?? "420420421", 10);
+
 export async function connectMetaMask(): Promise<{ signer: ethers.Signer; address: string }> {
   if (!window.ethereum) throw new Error("MetaMask not found. Use private key mode.");
-  await (window.ethereum as { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> }).request({ method: "eth_requestAccounts" });
+  const eth = window.ethereum as { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
+
+  await eth.request({ method: "eth_requestAccounts" });
+
+  // Provjeri da li je MetaMask na pravoj mreži
+  const chainHex = await eth.request({ method: "eth_chainId", params: [] }) as string;
+  const currentChain = parseInt(chainHex, 16);
+
+  if (currentChain !== EXPECTED_CHAIN_ID) {
+    try {
+      // Pokušaj switch na lokalnu mrežu
+      await eth.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x" + EXPECTED_CHAIN_ID.toString(16) }],
+      });
+    } catch (switchErr: unknown) {
+      // Chain nije dodat u MetaMask — dodaj ga automatski
+      const code = (switchErr as { code?: number })?.code;
+      if (code === 4902) {
+        await eth.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: "0x" + EXPECTED_CHAIN_ID.toString(16),
+            chainName: "Privy Localnet",
+            nativeCurrency: { name: "PAS", symbol: "PAS", decimals: 18 },
+            rpcUrls: [_rpcUrl.startsWith("/") ? window.location.origin + _rpcUrl : _rpcUrl],
+          }],
+        });
+      } else {
+        throw new Error(
+          `Wrong network. Please switch MetaMask to chain ID ${EXPECTED_CHAIN_ID} (Privy Localnet).`
+        );
+      }
+    }
+  }
+
   const bp = new ethers.BrowserProvider(window.ethereum as ethers.Eip1193Provider);
   const signer = await bp.getSigner();
   return { signer, address: await signer.getAddress() };

@@ -24,6 +24,7 @@ export interface FoundAddress {
   balance: string;
   balancePlanck?: bigint;
   usdcBalance?: bigint;
+  addressType?: "evm" | "substrate";
 }
 
 export interface Toast {

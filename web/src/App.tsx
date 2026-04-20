@@ -83,10 +83,12 @@ export default function App() {
 
   const refreshBalance = useCallback(async (addr: string) => {
     try {
-      const b = await provider.getBalance(addr);
+      // Koristi MetaMask-ov provajder ako postoji — da bude konzistentno sa Send panelom
+      const p = (signer as any)?.provider ?? provider;
+      const b = await p.getBalance(addr);
       setBalance(parseFloat(ethers.formatEther(b)).toFixed(4));
     } catch { setBalance("—"); }
-  }, []);
+  }, [signer]);
 
   useEffect(() => {
     if (!address) return;
@@ -156,28 +158,24 @@ export default function App() {
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, wasmReady]);
 
-  // Auto-register meta address via EVM precompile kad su keys + MetaMask signer dostupni
-  // Guard: skip if ova EVM adresa je vec registrovana u ovoj sesiji
-  useEffect(() => {
-    if (!signer || !keys || !wasmReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const addr = await signer.getAddress();
-        if (registeredEvmAddress.current === addr.toLowerCase()) return;
-        const spBytes = secp256k1ToCompressed(keys.K);
-        const vpBytes = bn254ToBytes64(keys.V);
-        const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
-        if (!cancelled) {
-          registeredEvmAddress.current = addr.toLowerCase();
-          addToast(`Meta address registered via precompile (${hash.slice(0, 10)}…)`, "success");
-        }
-      } catch (e: unknown) {
-        if (!cancelled) addToast(e instanceof Error ? e.message : "Precompile registration failed", "error");
+  // Eksplicitna registracija na zahtev korisnika (dugme u Keys panelu)
+  async function handleRegisterViaPrecompile() {
+    if (!signer || !keys) return;
+    try {
+      const addr = await signer.getAddress();
+      if (registeredEvmAddress.current === addr.toLowerCase()) {
+        addToast("Already registered in this session", "info");
+        return;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [signer, keys, wasmReady]);
+      const spBytes = secp256k1ToCompressed(keys.K);
+      const vpBytes = bn254ToBytes64(keys.V);
+      const hash = await registerMetaAddressViaPrecompile(signer, spBytes, vpBytes);
+      registeredEvmAddress.current = addr.toLowerCase();
+      addToast(`Registered on-chain (${hash.slice(0, 10)}…)`, "success");
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : "Registration failed", "error");
+    }
+  }
 
   useEffect(() => {
     setSubPas(null); setSubUsdc(null);
@@ -394,7 +392,7 @@ export default function App() {
                     </p>
                   )}
                 </div>
-                {isXcm && foundAddresses.length > 0 && (() => {
+                {foundAddresses.length > 0 && (() => {
                   const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
                   const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
                   return (
@@ -424,7 +422,7 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
+          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
           {tab === "send" && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
         </main>

@@ -103,6 +103,7 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
   async function sendFunds() {
     if (!resolved) return;
     setStep("sending"); setError("");
+    console.log("[Send] mode:", mode, "isXcm:", isXcm, "signer:", signer ? "set" : "null", "subSigner:", subSigner ? "set" : "null");
 
     try {
       if (isXcm) {
