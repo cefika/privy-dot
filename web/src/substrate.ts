@@ -370,35 +370,36 @@ export async function getSponsorBalance(api: ApiPromise, accountId: string): Pro
 export async function withdrawFromStealth(
   api: ApiPromise,
   stealthAddress: string,   // AccountId32 hex (from scan results)
-  spendingPrivKey: string,  // ECDSA spending private key
+  spendingPrivKey: string,  // ECDSA spending private key (used to SIGN only)
   destination: string,      // AccountId32 hex or SS58 of recipient
-  sponsor: string,          // AccountId with funds in GasSponsorPool
+  sponsorPair: KeyringPair, // Keypair with PAS + funds in GasSponsorPool (submits + pays fee)
   assetId?: number,         // undefined = native PAS, number = pallet-assets asset
   amount?: bigint           // undefined = entire balance, bigint = specific amount
 ): Promise<string> {
-  const pair = getStealthSpendingKeypair(spendingPrivKey);
+  const stealthPair = getStealthSpendingKeypair(spendingPrivKey);
 
   // Decode destination to raw 32 bytes for the message (SCALE encoding of AccountId32 = raw bytes)
   const destBytes = decodeAddress(destination);
 
   // Build and sign the v2 withdrawal message (includes asset_id + amount)
   const msg = buildWithdrawalMessage(stealthAddress, destBytes, assetId, amount);
-  const sig = pair.sign(msg); // 65 bytes: r[32] + s[32] + v[1]
+  const sig = stealthPair.sign(msg); // 65 bytes: r[32] + s[32] + v[1]
 
   // Option<u32> for polkadot.js: null = None, number = Some(n)
   const assetArg = assetId !== undefined && assetId !== null ? assetId : null;
   // Option<u128> for polkadot.js: null = None, string = Some(n)
   const amountArg = amount !== undefined && amount !== null ? amount.toString() : null;
 
+  // Sponsor submits and pays the inclusion fee — stealth address needs no PAS
   return submitTx(
     api.tx.stealthAddresses.withdrawFromStealth(
       Array.from(hexToU8a(stealthAddress)), // stealth: [u8; 32]
       destination,                            // destination: AccountId
       Array.from(sig),                        // signature: [u8; 65]
-      sponsor,                                // sponsor: AccountId (must have pool funds)
+      sponsorPair.address,                    // sponsor: AccountId (must have pool funds)
       assetArg,                               // asset_id: Option<u32>
       amountArg                               // amount: Option<u128>
     ),
-    pair
+    sponsorPair  // ← sponsor podnosi i plaća fee, ne stealth adresa
   );
 }

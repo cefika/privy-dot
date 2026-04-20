@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info } from "lucide-react";
+import { Key, Send, Radar, Download, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain";
 import { contractAddress } from "./config/deployment";
@@ -57,6 +57,7 @@ export default function App() {
   const [destPara, setDestPara] = useState<number>(2000);
   const [subPas, setSubPas] = useState<string | null>(null);
   const [subUsdc, setSubUsdc] = useState<string | null>(null);
+  const [autoScanning, setAutoScanning] = useState(false);
 
   const [foundAddresses, setFoundAddresses] = useState<FoundAddress[]>([]);
 
@@ -96,6 +97,7 @@ export default function App() {
   useEffect(() => {
     if (!subSigner || !keys || !wasmReady) return;
     let cancelled = false;
+    setAutoScanning(true);
     (async () => {
       try {
         const srcApi = await getApi(sourcePara);
@@ -126,6 +128,7 @@ export default function App() {
         }
         if (!cancelled) setFoundAddresses(matches);
       } catch {}
+      finally { if (!cancelled) setAutoScanning(false); }
     })();
     return () => { cancelled = true; };
   }, [subSigner, keys, sourcePara, destPara, wasmReady]);
@@ -348,6 +351,11 @@ export default function App() {
                   <div className="pl-4 space-y-0.5">
                     {subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
                     {subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
+                    {autoScanning && (
+                      <p className="text-xs text-zinc-500 flex items-center gap-1">
+                        <Loader size={10} className="animate-spin" /> scanning…
+                      </p>
+                    )}
                   </div>
                   {foundAddresses.length > 0 && (() => {
                     const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);

@@ -209,7 +209,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           modal.addr.stealthAddress,
           modal.addr.spendingPrivKey,
           modal.to,
-          subSigner.address,
+          subSigner,
           assetId,
           withdrawAmount
         );
@@ -362,7 +362,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
               <button
                 onClick={() => setModal({ addr, to: "", amount: "", loading: false, txHash: "", useWithdraw: false, assetId: "" })}
                 className="btn-primary w-full mt-4 flex items-center justify-center gap-2"
-                disabled={addr.balance === "0.0000"}
+                disabled={addr.balance === "0.0000" && (addr.usdcBalance ?? 0n) === 0n}
               >
                 <Send size={14} /> Spend / Withdraw
               </button>
