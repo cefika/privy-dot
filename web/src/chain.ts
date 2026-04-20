@@ -1,6 +1,36 @@
 import { ethers } from "ethers";
 
-// ABI for ECPDKSAP — pvm-contract-macros, no registry
+// ── Stealth Precompile ────────────────────────────────────────────────────────
+// Registrovan na adresi AddressMatcher::Fixed(0x1000) → H160 bytes[16..20] = 0x10000000
+export const PRECOMPILE_ADDR = "0x0000000000000000000000000000000010000000";
+
+export const PRECOMPILE_ABI = [
+  "function registerMetaAddress(bytes spendingPubkey, bytes viewingPubkey, uint32 schemeId) external",
+  "function announce(bytes ephemeralPubkey, bytes2 viewTag, bytes32 stealthAddress, bytes32 metadata) external",
+];
+
+export function getPrecompile(signer: ethers.Signer) {
+  return new ethers.Contract(PRECOMPILE_ADDR, PRECOMPILE_ABI, signer);
+}
+
+export async function registerMetaAddressViaPrecompile(
+  signer: ethers.Signer,
+  spendingBytes: Uint8Array,  // 33 bytes compressed secp256k1
+  viewingBytes: Uint8Array,   // 64 bytes BN254 G1
+  schemeId = 2901,
+): Promise<string> {
+  const precompile = getPrecompile(signer);
+  const tx = await precompile.registerMetaAddress(
+    ethers.hexlify(spendingBytes),
+    ethers.hexlify(viewingBytes),
+    schemeId,
+    { gasLimit: 500_000 },
+  );
+  const receipt = await tx.wait();
+  return receipt.hash;
+}
+
+// ── ABI for ECPDKSAP — pvm-contract-macros, no registry ──────────────────────
 export const ABI = [
   "function sendEthViaProxy(address payable stealthAddress, bytes R, bytes viewTag) external payable",
   "function ecpdksapSchemeId() external view returns (uint256)",
