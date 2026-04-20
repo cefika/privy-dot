@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@polkadot/api": "^15.0.1",
+    "@polkadot/extension-dapp": "^0.63.1",
+    "@polkadot/extension-inject": "^0.63.1",
     "@polkadot/keyring": "^13.4.3",
     "@polkadot/util": "^13.4.3",
     "@polkadot/util-crypto": "^13.4.3",
