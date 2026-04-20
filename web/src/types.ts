@@ -21,6 +21,9 @@ export interface FoundAddress {
   stealthAddress: string;
   spendingPrivKey: string;
   spendingPubKey: string;
+  balance: string;
+  balancePlanck?: bigint;
+  usdcBalance?: bigint;
 }
 
 export interface Toast {

@@ -41,7 +41,7 @@ pub mod pallet {
     use frame::prelude::*;
     use frame::traits::fungible::{Inspect as FungibleInspect, Mutate as FungibleMutate, MutateHold};
     use frame::traits::fungibles::{self, Inspect as FungiblesInspect, Mutate as FungiblesMutate};
-    use frame::traits::tokens::{Precision, Preservation};
+    use frame::traits::tokens::{Fortitude, Precision, Preservation};
     use polkadot_sdk::staging_xcm::prelude::*;
 
     /// Tip bilansa nativnog tokena izveden iz `NativeBalance` asociranog tipa.
@@ -159,7 +159,13 @@ pub mod pallet {
         type RuntimeHoldReason: From<HoldReason>;
 
         /// Identifikator asset-a u pallet-assets (u runtimeu je `u32`).
-        type AssetId: Member + Parameter + MaxEncodedLen + Clone;
+        /// `Into<u64>` je potreban za XCM GeneralIndex enkodovanje.
+        type AssetId: Member + Parameter + MaxEncodedLen + Clone + Into<u64>;
+
+        /// Indeks Assets paleta u construct_runtime! (npr. 52).
+        /// Koristi se za konstruisanje XCM asset location-a.
+        #[pallet::constant]
+        type AssetsPalletIndex: Get<u8>;
 
         /// Interfejs ka pallet-assets — za transfer ERC20-kompatibilnih tokena
         /// (npr. USDC, rSDC) sa stealth adrese.
@@ -171,6 +177,9 @@ pub mod pallet {
 
         /// XCM sender — za slanje cross-chain poruka.
         type XcmSender: SendXcm;
+
+        /// RuntimeCall tip — potreban za enkodovanje Transact XCM poziva.
+        type RuntimeCall: codec::Encode + From<Call<Self>>;
 
         /// Težine operacija.
         type WeightInfo: WeightInfo;
@@ -291,7 +300,15 @@ pub mod pallet {
             delegate: T::AccountId,
             valid_until: Option<BlockNumberFor<T>>,
         },
-        /// Cross-chain stealth plaćanje poslato.
+        /// Cross-chain stealth plaćanje pallet-assets tokena (USDC itd.) poslato.
+        StealthAssetXcmSent {
+            dest_para_id: u32,
+            asset_id: T::AssetId,
+            stealth_address: [u8; 32],
+            amount: u128,
+            announcement_nonce: u64,
+        },
+        /// Cross-chain stealth plaćanje nativnog tokena poslato.
         StealthXcmSent {
             dest_para_id: u32,
             stealth_address: [u8; 32],
@@ -731,6 +748,160 @@ pub mod pallet {
                 stealth_address,
                 amount,
                 announcement_nonce: nonce,
+            });
+
+            Ok(())
+        }
+
+        /// Pošalji pallet-assets token (USDC itd.) na stealth adresu na drugom parachain-u.
+        ///
+        /// Atomski:
+        /// 1. Spaljuje (burn) asset od pošiljaoca na ovom lancu
+        /// 2. Šalje XCM `ReceiveTeleportedAsset` poruку odredišnom parachain-u
+        /// 3. Upisuje announcement na ovom lancu — primalac skenira ovaj lanac
+        ///
+        /// Odredišni parachain mora imati isti asset (isti asset ID, isti pallet index)
+        /// i mora biti poverljiv teleport partner (`IsTeleporter = Everything`).
+        #[pallet::call_index(6)]
+        #[pallet::weight(T::WeightInfo::send_stealth_xcm())]
+        pub fn send_stealth_asset_xcm(
+            origin: OriginFor<T>,
+            asset_id: T::AssetId,
+            dest_para_id: u32,
+            stealth_address: [u8; 32],
+            amount: u128,
+            ephemeral_pubkey: [u8; 64],
+            view_tag: [u8; 2],
+            metadata: [u8; 32],
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            ensure!(amount > 0, Error::<T>::ZeroAmount);
+
+            // ── 1. Spali asset od pošiljaoca ─────────────────────────────────
+            let amount_balance: AssetBalanceOf<T> = amount.saturated_into();
+            <T::Assets as FungiblesMutate<T::AccountId>>::burn_from(
+                asset_id.clone(),
+                &who,
+                amount_balance,
+                Preservation::Expendable,
+                Precision::Exact,
+                Fortitude::Polite,
+            )?;
+
+            // ── 2. Konstruiši XCM Transact poruku ────────────────────────────
+            // Enkoduj poziv receive_stealth_asset_xcm na odredišnom lancu.
+            // Oba lanca koriste isti runtime, pa je enkodovanje identično.
+            let dest: Location = Location::new(1, [Junction::Parachain(dest_para_id)]);
+
+            let receive_call: <T as Config>::RuntimeCall = Call::<T>::receive_stealth_asset_xcm {
+                asset_id: asset_id.clone(),
+                stealth_address,
+                amount,
+                ephemeral_pubkey,
+                view_tag,
+                metadata,
+            }.into();
+
+            let xcm: Xcm<()> = Xcm(vec![
+                UnpaidExecution { weight_limit: WeightLimit::Unlimited, check_origin: None },
+                Transact {
+                    origin_kind: OriginKind::SovereignAccount,
+                    call: receive_call.encode().into(),
+                    fallback_max_weight: None,
+                },
+            ]);
+
+            let (ticket, _) = T::XcmSender::validate(
+                &mut Some(dest),
+                &mut Some(xcm),
+            ).map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            T::XcmSender::deliver(ticket)
+                .map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            // ── 3. Upiši announcement lokalno ────────────────────────────────
+            let nonce = AnnouncementNonce::<T>::get();
+
+            let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
+                .map_err(|_| Error::<T>::XcmSendFailed)?;
+
+            Announcements::<T>::insert(nonce, Announcement {
+                ephemeral_pubkey,
+                view_tag,
+                stealth_address: stealth_account,
+                metadata,
+            });
+
+            ViewTagIndex::<T>::try_mutate(view_tag, |nonces| {
+                nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
+            })?;
+
+            AnnouncementNonce::<T>::put(nonce + 1);
+
+            Self::deposit_event(Event::StealthAssetXcmSent {
+                dest_para_id,
+                asset_id,
+                stealth_address,
+                amount,
+                announcement_nonce: nonce,
+            });
+
+            Ok(())
+        }
+
+        /// Prima XCM stealth asset transfer i mintuje token na stealth adresu.
+        ///
+        /// Ovaj extrinsic poziva odredišni parachain automatski putem XCM Transact.
+        /// Ne treba ga korisnik pozivati direktno.
+        ///
+        /// Poziv dolazi od sovereign account-a pošiljaoca — `ensure_signed` prihvata
+        /// jer je sovereign account validan AccountId na odredištu.
+        #[pallet::call_index(7)]
+        #[pallet::weight(T::WeightInfo::announce())]
+        pub fn receive_stealth_asset_xcm(
+            origin: OriginFor<T>,
+            asset_id: T::AssetId,
+            stealth_address: [u8; 32],
+            amount: u128,
+            ephemeral_pubkey: [u8; 64],
+            view_tag: [u8; 2],
+            metadata: [u8; 32],
+        ) -> DispatchResult {
+            let _relayer = ensure_signed(origin)?;
+            ensure!(amount > 0, Error::<T>::ZeroAmount);
+
+            // ── 1. Mintuj asset na stealth adresu ────────────────────────────
+            let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
+                .map_err(|_| Error::<T>::InvalidProof)?;
+
+            let amount_balance: AssetBalanceOf<T> = amount.saturated_into();
+            <T::Assets as FungiblesMutate<T::AccountId>>::mint_into(
+                asset_id.clone(),
+                &stealth_account,
+                amount_balance,
+            )?;
+
+            // ── 2. Upiši announcement ─────────────────────────────────────────
+            let nonce = AnnouncementNonce::<T>::get();
+
+            Announcements::<T>::insert(nonce, Announcement {
+                ephemeral_pubkey,
+                view_tag,
+                stealth_address: stealth_account.clone(),
+                metadata,
+            });
+
+            ViewTagIndex::<T>::try_mutate(view_tag, |nonces| {
+                nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
+            })?;
+
+            AnnouncementNonce::<T>::put(nonce + 1);
+
+            Self::deposit_event(Event::Announced {
+                nonce,
+                ephemeral_pubkey,
+                view_tag,
+                stealth_address: stealth_account,
             });
 
             Ok(())

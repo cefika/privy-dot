@@ -321,6 +321,15 @@ impl pallet_assets::Config for Runtime {
 	type BenchmarkHelper = ();
 }
 
+// ── pallet-utility (batch calls) ──────────────────────────────────────
+
+impl pallet_utility::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type PalletsOrigin = crate::OriginCaller;
+	type WeightInfo = pallet_utility::weights::SubstrateWeight<Runtime>;
+}
+
 // ── pallet-stealth-addresses (ECPDKSAP protokol) ──────────────────────
 
 parameter_types! {
@@ -344,8 +353,10 @@ impl pallet_stealth_addresses::Config for Runtime {
 	type NativeBalance = Balances;
 	type RuntimeHoldReason = RuntimeHoldReason;
 	type AssetId = u32;
+	type AssetsPalletIndex = ConstU8<52>;
 	type Assets = Assets;
 	type XcmSender = xcm_config::XcmRouter;
+	type RuntimeCall = RuntimeCall;
 	type WeightInfo = ();
 }
 

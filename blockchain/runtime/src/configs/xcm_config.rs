@@ -9,7 +9,7 @@ use polkadot_sdk::{
 
 use frame_support::{
 	parameter_types,
-	traits::{ConstU32, Contains, Everything, Nothing},
+	traits::{ConstU32, Everything, Nothing},
 	weights::Weight,
 };
 use frame_system::EnsureRoot;
@@ -61,12 +61,6 @@ parameter_types! {
 	pub const MaxAssetsIntoHolding: u32 = 64;
 }
 
-pub struct ParentOrParentsExecutivePlurality;
-impl Contains<Location> for ParentOrParentsExecutivePlurality {
-	fn contains(location: &Location) -> bool {
-		matches!(location.unpack(), (1, []) | (1, [Plurality { id: BodyId::Executive, .. }]))
-	}
-}
 
 pub type Barrier = TrailingSetTopicAsId<
 	DenyThenTry<
@@ -76,7 +70,7 @@ pub type Barrier = TrailingSetTopicAsId<
 			WithComputedOrigin<
 				(
 					AllowTopLevelPaidExecutionFrom<Everything>,
-					AllowExplicitUnpaidExecutionFrom<ParentOrParentsExecutivePlurality>,
+					AllowExplicitUnpaidExecutionFrom<Everything>,
 				),
 				UniversalLocation,
 				ConstU32<8>,

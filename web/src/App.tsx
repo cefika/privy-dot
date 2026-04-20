@@ -6,7 +6,7 @@ import { configure, connectMetaMask, signerFromPrivKey, provider } from "./chain
 import { contractAddress } from "./config/deployment";
 import { getDevAccount, getAccountFromMnemonic, PARACHAINS, disconnectAll } from "./substrate";
 import type { KeyringPair } from "./substrate";
-import type { KeyPairs, Toast } from "./types";
+import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
@@ -55,6 +55,8 @@ export default function App() {
   const [showMnemonicInput, setShowMnemonicInput] = useState(false);
   const [sourcePara, setSourcePara] = useState<number>(1000);
   const [destPara, setDestPara] = useState<number>(2000);
+
+  const [foundAddresses, setFoundAddresses] = useState<FoundAddress[]>([]);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -150,6 +152,7 @@ export default function App() {
 
   function disconnectXcm() {
     setSubSigner(null); setSubAddress(""); setKeys(null);
+    setFoundAddresses([]);
     disconnectAll();
   }
 
@@ -284,6 +287,21 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-xs text-text-muted pl-4 capitalize">{devAccount}</p>
+                  {foundAddresses.length > 0 && (() => {
+                    const totalPas = foundAddresses.reduce((s, a) => s + (a.balancePlanck ?? 0n), 0n);
+                    const totalUsdc = foundAddresses.reduce((s, a) => s + (a.usdcBalance ?? 0n), 0n);
+                    return (
+                      <div className="pl-4 space-y-0.5">
+                        <p className="text-xs text-text-muted">Stealth balances:</p>
+                        {totalPas > 0n && (
+                          <p className="text-xs text-emerald-400 font-semibold">{(Number(totalPas) / 1e12).toFixed(4)} PAS</p>
+                        )}
+                        {totalUsdc > 0n && (
+                          <p className="text-xs text-blue-400 font-semibold">{(Number(totalUsdc) / 1_000_000).toFixed(2)} USDC</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <button onClick={disconnectXcm} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary px-1">
                     <WifiOff size={11} /> Disconnect
                   </button>
@@ -373,7 +391,7 @@ export default function App() {
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
           {tab === "keys"     && <KeysPanel    keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} />}
           {tab === "send"     && <SendPanel    mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan"     && <ScanPanel    mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} toast={addToast} />}
+          {tab === "scan"     && <ScanPanel    mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
           {tab === "register" && <ReceivePanel mode={mode} keys={keys} subSigner={subSigner} sourcePara={sourcePara} />}
         </main>
       </div>
