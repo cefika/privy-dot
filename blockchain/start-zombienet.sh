@@ -89,6 +89,7 @@ echo -n "Pokrećem eth-rpc proxy na http://127.0.0.1:8545..."
 eth-rpc \
     --node-rpc-url ws://127.0.0.1:9944 \
     --rpc-port 8545 \
+    --rpc-cors all \
     --chain "$SCRIPT_DIR/chain_spec.json" \
     > /tmp/eth-rpc.log 2>&1 &
 ETH_RPC_PID=$!

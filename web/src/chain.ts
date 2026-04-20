@@ -66,7 +66,7 @@ export const ABI = [
 ];
 
 // Mutable config — set by App before rendering panels
-let _rpcUrl = import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545";
+let _rpcUrl: string = import.meta.env.VITE_RPC_URL ?? (typeof window !== "undefined" ? `${window.location.origin}/eth-rpc` : "http://127.0.0.1:8545");
 let _contractAddress = "";
 let _providerInstance = new ethers.JsonRpcProvider(_rpcUrl, undefined, { staticNetwork: true });
 

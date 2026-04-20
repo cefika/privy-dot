@@ -11,7 +11,7 @@ import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
 
-const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? "http://127.0.0.1:8545";
+const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? `${window.location.origin}/eth-rpc`;
 
 type Tab = "keys" | "send" | "scan";
 type Mode = "evm" | "xcm";
