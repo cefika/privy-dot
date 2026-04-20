@@ -432,7 +432,7 @@ pub mod pallet {
                 nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
             })?;
 
-            AnnouncementNonce::<T>::put(nonce + 1);
+            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
 
             Self::deposit_event(Event::Announced {
                 nonce,
@@ -741,7 +741,7 @@ pub mod pallet {
                 nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
             })?;
 
-            AnnouncementNonce::<T>::put(nonce + 1);
+            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
 
             Self::deposit_event(Event::StealthXcmSent {
                 dest_para_id,
@@ -836,7 +836,7 @@ pub mod pallet {
                 nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
             })?;
 
-            AnnouncementNonce::<T>::put(nonce + 1);
+            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
 
             Self::deposit_event(Event::StealthAssetXcmSent {
                 dest_para_id,
@@ -895,7 +895,7 @@ pub mod pallet {
                 nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
             })?;
 
-            AnnouncementNonce::<T>::put(nonce + 1);
+            AnnouncementNonce::<T>::put(nonce.saturating_add(1));
 
             Self::deposit_event(Event::Announced {
                 nonce,
