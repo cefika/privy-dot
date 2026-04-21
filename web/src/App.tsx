@@ -134,63 +134,83 @@ export default function App() {
     return () => clearInterval(id);
   }, [address, refreshBalance]);
 
-  // Auto-scan u pozadini kad se konektuje acc sa keys
+  // Scan logika — poziva se pri konektu, na intervalu i ručno iz sidebar-a
+  const runScan = useCallback(async () => {
+    if (!subSigner || !keys || !wasmReady) return;
+    setAutoScanning(true);
+    try {
+      const addr = signerAddress(subSigner);
+      const srcApi = await getApi(sourcePara);
+      const fromNonce = loadLastNonce(addr);
+      const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(srcApi, fromNonce);
+      if (announcements.length === 0) { saveLastNonce(addr, nextNonce); return; }
+      const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
+      const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
+      const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
+      const destApi = await getApi(destPara);
+      const matches: FoundAddress[] = [];
+      for (let i = 0; i < result.spendingPrivKeys.length; i++) {
+        const privKey = result.spendingPrivKeys[i];
+        const pubKey = result.spendingPubKeys[i];
+        if (!privKey || privKey === "0x" || !pubKey) continue;
+        const stealthAddress = deriveSubstrateStealthAddress(pubKey);
+        const balPlanck = await getBalance(destApi, stealthAddress);
+        const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
+        if (balPlanck === 0n && usdcBalance === 0n) continue;
+        matches.push({
+          stealthAddress,
+          spendingPrivKey: privKey,
+          spendingPubKey: pubKey,
+          balance: (Number(balPlanck) / 1e12).toFixed(4),
+          balancePlanck: balPlanck,
+          usdcBalance,
+        });
+      }
+      saveLastNonce(addr, nextNonce);
+      setFoundAddresses(matches);
+      if (matches.length > 0) {
+        const now = new Date().toISOString();
+        mergeHistory(addr, matches.map(m => ({
+          id: m.stealthAddress + now,
+          stealthAddress: m.stealthAddress,
+          balancePas: m.balance,
+          balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+          scannedAt: now,
+          sourcePara,
+          spendingPubKey: m.spendingPubKey,
+        })));
+      }
+    } catch {}
+    finally { setAutoScanning(false); }
+  }, [subSigner, keys, sourcePara, destPara, wasmReady]);
+
+  // Pokreni scan pri konektu i svakih 10 sekundi
   useEffect(() => {
     if (!subSigner || !keys || !wasmReady) return;
-    let cancelled = false;
-    setAutoScanning(true);
-    (async () => {
+    runScan();
+    const id = setInterval(runScan, 10_000);
+    return () => clearInterval(id);
+  }, [subSigner, keys, sourcePara, destPara, wasmReady, runScan]);
+
+  // Osvežava balanse već pronađenih stealth adresa svakih 15s
+  const foundRef = useRef<FoundAddress[]>([]);
+  foundRef.current = foundAddresses;
+  useEffect(() => {
+    const refresh = async () => {
+      if (foundRef.current.length === 0) return;
       try {
-        const addr = signerAddress(subSigner);
-        const srcApi = await getApi(sourcePara);
-        const fromNonce = loadLastNonce(addr);
-        const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(srcApi, fromNonce);
-        if (cancelled) return;
-        if (announcements.length === 0) { saveLastNonce(addr, nextNonce); return; }
-        const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
-        const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
-        const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
-        if (cancelled) return;
         const destApi = await getApi(destPara);
-        const matches: FoundAddress[] = [];
-        for (let i = 0; i < result.spendingPrivKeys.length; i++) {
-          const privKey = result.spendingPrivKeys[i];
-          const pubKey = result.spendingPubKeys[i];
-          if (!privKey || privKey === "0x" || !pubKey) continue;
-          const stealthAddress = deriveSubstrateStealthAddress(pubKey);
-          const balPlanck = await getBalance(destApi, stealthAddress);
-          const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
-          if (balPlanck === 0n && usdcBalance === 0n) continue;
-          matches.push({
-            stealthAddress,
-            spendingPrivKey: privKey,
-            spendingPubKey: pubKey,
-            balance: (Number(balPlanck) / 1e12).toFixed(4),
-            balancePlanck: balPlanck,
-            usdcBalance,
-          });
-        }
-        if (!cancelled) {
-          saveLastNonce(addr, nextNonce);
-          setFoundAddresses(matches);
-          if (matches.length > 0) {
-            const now = new Date().toISOString();
-            mergeHistory(addr, matches.map(m => ({
-              id: m.stealthAddress + now,
-              stealthAddress: m.stealthAddress,
-              balancePas: m.balance,
-              balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
-              scannedAt: now,
-              sourcePara,
-              spendingPubKey: m.spendingPubKey,
-            })));
-          }
-        }
+        const updated = await Promise.all(foundRef.current.map(async (a) => {
+          const balPlanck = await getBalance(destApi, a.stealthAddress);
+          const usdcBalance = await getAssetBalance(destApi, a.stealthAddress, 1);
+          return { ...a, balance: (Number(balPlanck) / 1e12).toFixed(4), balancePlanck: balPlanck, usdcBalance };
+        }));
+        setFoundAddresses(updated);
       } catch {}
-      finally { setAutoScanning(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [subSigner, keys, sourcePara, destPara, wasmReady]);
+    };
+    const id = setInterval(refresh, 15_000);
+    return () => clearInterval(id);
+  }, [destPara]);
 
   // Auto-register meta address kad su keys + subSigner dostupni (Substrate)
   useEffect(() => {
@@ -538,10 +558,17 @@ export default function App() {
                   {!isXcm && balance && <p className="text-xs text-zinc-300">{balance} PAS</p>}
                   {isXcm && subPas !== null && <p className="text-xs text-zinc-300">{subPas} PAS</p>}
                   {isXcm && subUsdc !== null && Number(subUsdc) > 0 && <p className="text-xs text-blue-400">{subUsdc} USDC</p>}
-                  {autoScanning && (
+                  {autoScanning ? (
                     <p className="text-xs text-zinc-500 flex items-center gap-1">
                       <Loader size={10} className="animate-spin" /> scanning…
                     </p>
+                  ) : userMode === "employee" && (
+                    <button
+                      onClick={runScan}
+                      className="text-xs text-zinc-500 hover:text-violet-400 flex items-center gap-1 transition-colors"
+                    >
+                      <Radar size={10} /> Scan now
+                    </button>
                   )}
                 </div>
                 {foundAddresses.length > 0 && (() => {
