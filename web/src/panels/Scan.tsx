@@ -46,7 +46,6 @@ interface SpendModal {
 
 export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, connectedAddress, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
-  const [fromBlock, setFromBlock] = useState("0");
   const [progress, setProgress] = useState("");
   const [modal, setModal] = useState<SpendModal | null>(null);
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
@@ -375,34 +374,30 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
       <div className="card">
         <div className="flex gap-3 items-end">
-          {!isXcm && (
-            <div className="flex-1">
-              <label className="label">Scan from block</label>
-              <input value={fromBlock} onChange={e => setFromBlock(e.target.value)} className="input" placeholder="0" />
-            </div>
-          )}
-          {isXcm && (
-            <div className="flex-1 space-y-1">
+          <div className="flex-1 space-y-1">
+            {isXcm ? (
               <p className="text-xs text-zinc-400">
                 Announcements: <span className="font-mono text-zinc-300">Para {sourcePara}</span>
                 {" "}→ Balances: <span className="font-mono text-zinc-300">Para {destPara}</span>
               </p>
-              {subSigner && (() => {
-                const n = loadLastNonce(signerAddress(subSigner));
-                return n > 0 ? (
-                  <p className="text-xs text-zinc-500">
-                    Scanning from announcement #{n} ·{" "}
-                    <button
-                      className="text-violet-400 hover:text-violet-300 underline"
-                      onClick={() => { saveLastNonce(signerAddress(subSigner!), 0); toast("Reset — next scan will check all announcements"); }}
-                    >
-                      Rescan from beginning
-                    </button>
-                  </p>
-                ) : null;
-              })()}
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-zinc-400">Scan announcements on Para {sourcePara}</p>
+            )}
+            {connectedAddress && (() => {
+              const n = loadLastNonce(connectedAddress);
+              return n > 0 ? (
+                <p className="text-xs text-zinc-500">
+                  Scanning from announcement #{n} ·{" "}
+                  <button
+                    className="text-violet-400 hover:text-violet-300 underline"
+                    onClick={() => { saveLastNonce(connectedAddress, 0); toast("Reset — next scan will check all announcements"); }}
+                  >
+                    Rescan from beginning
+                  </button>
+                </p>
+              ) : null;
+            })()}
+          </div>
           <button
             onClick={handleScan}
             disabled={scanning || !canScan}

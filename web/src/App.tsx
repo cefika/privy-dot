@@ -268,26 +268,22 @@ export default function App() {
     return () => clearInterval(id);
   }, [destPara]);
 
-  // Auto-register meta address kad su keys + subSigner dostupni (Substrate)
-  useEffect(() => {
-    if (!subSigner || !keys || !wasmReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const api = await getApi(sourcePara);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const existing = await (api.query.stealthAddresses as any).stealthMetaAddressRegistry(signerAddress(subSigner));
-        if (cancelled) return;
-        if (existing.isNone || !existing.isSome) {
-          await registerMetaAddress(api, subSigner, keys.K, keys.V);
-          if (!cancelled) addToast("Meta address registered on-chain", "success");
-        }
-      } catch (e: unknown) {
-        if (!cancelled) addToast(e instanceof Error ? e.message : "Registration failed", "error");
+  // Eksplicitna registracija za Substrate korisnike (dugme u Keys panelu)
+  async function handleRegisterSubstrate() {
+    if (!subSigner || !keys) return;
+    try {
+      const api = await getApi(sourcePara);
+      await registerMetaAddress(api, subSigner, keys.K, keys.V);
+      addToast("Meta address registered on-chain", "success");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Registration failed";
+      if (msg.toLowerCase().includes("balance too low") || msg.toLowerCase().includes("inability to pay")) {
+        addToast("Not enough PAS for fee — share meta address manually instead", "error");
+      } else {
+        addToast(msg, "error");
       }
-    })();
-    return () => { cancelled = true; };
-  }, [subSigner, keys, sourcePara, wasmReady]);
+    }
+  }
 
   // Eksplicitna registracija na zahtev korisnika (dugme u Keys panelu)
   async function handleRegisterViaPrecompile() {
@@ -659,7 +655,7 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys"    && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
+          {tab === "keys"    && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} onRegisterSubstrate={subSigner ? handleRegisterSubstrate : undefined} />}
           {tab === "send"    && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} connectedAddress={connectedAddress} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
           {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
