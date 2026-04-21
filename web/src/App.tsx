@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
@@ -11,15 +11,22 @@ import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
+import PayrollPanel from "./panels/Payroll";
+import ModeSelector from "./components/ModeSelector";
 
-type Tab = "keys" | "send" | "scan";
+type UserMode = "employee" | "business";
+type Tab = "keys" | "send" | "scan" | "payroll";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
-const NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "keys", label: "My Keys", Icon: Key  },
-  { id: "send", label: "Send",    Icon: Send },
-  { id: "scan", label: "Scan",    Icon: Radar },
+const EMPLOYEE_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
+  { id: "keys", label: "My Keys",  Icon: Key   },
+  { id: "scan", label: "Scan",     Icon: Radar },
+];
+
+const BUSINESS_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
+  { id: "payroll", label: "Payroll", Icon: Send  },
+  { id: "send",    label: "Send",    Icon: Radar },
 ];
 
 function keysLSKey(addr: string) { return `privy-keys-${addr.toLowerCase()}`; }
@@ -49,6 +56,7 @@ async function loadKeys(addr: string, password: string): Promise<KeyPairs | null
 let toastId = 0;
 
 export default function App() {
+  const [userMode, setUserMode] = useState<UserMode | null>(null);
   const [tab, setTab] = useState<Tab>("keys");
   const [mode, setMode] = useState<Mode>("xcm");
   const [wasmReady, setWasmReady] = useState(false);
@@ -367,8 +375,16 @@ export default function App() {
     );
   }
 
+  if (!userMode) {
+    return <ModeSelector onSelect={m => {
+      setUserMode(m);
+      setTab(m === "business" ? "payroll" : "keys");
+    }} />;
+  }
+
   const isXcm = mode === "xcm";
   const connectedAddress = isXcm ? subAddress : address;
+  const NAV = userMode === "employee" ? EMPLOYEE_NAV : BUSINESS_NAV;
 
   return (
     <div className="min-h-screen bg-pattern relative flex flex-col">
@@ -387,6 +403,30 @@ export default function App() {
           </div>
           <span className="text-base font-semibold text-text-primary font-display tracking-tight">Privy Dot</span>
           <span className="text-xs text-text-muted ml-1">/ Stealth Addresses on Polkadot</span>
+        </div>
+
+        {/* Mode switcher */}
+        <div className="flex items-center gap-1 ml-2">
+          <button
+            onClick={() => { setUserMode("employee"); setTab("keys"); }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+              userMode === "employee"
+                ? "bg-polka-500/15 text-polka-300 border border-polka-500/30"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <Users size={11} /> Employee
+          </button>
+          <button
+            onClick={() => { setUserMode("business"); setTab("payroll"); }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+              userMode === "business"
+                ? "bg-accent-blue/15 text-accent-blue border border-accent-blue/30"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <Building2 size={11} /> Business
+          </button>
         </div>
 
         {/* XCM parachain selectors */}
@@ -499,9 +539,10 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys" && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
-          {tab === "send" && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan" && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
+          {tab === "keys"    && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
+          {tab === "send"    && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
+          {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
         </main>
       </div>
 
