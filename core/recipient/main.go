@@ -186,6 +186,69 @@ func Scan(inputJsonString string) (outputJsonString string) {
 	return string(tmp)
 }
 
+// ScanAudit — viewing-only scan using spending PUBLIC key K (no private k needed).
+// Computes stealth address as b * K where b is derived from shared secret.
+// Returns only spending public keys (no private keys — auditor cannot spend).
+func ScanAudit(inputJsonString string) (outputJsonString string) {
+	var input RecipientAuditInputData
+	if err := json.Unmarshal([]byte(inputJsonString), &input); err != nil {
+		log.Printf("error unmarshalling audit input: %v", err)
+		panic(fmt.Errorf("error unmarshalling audit input: %v", err))
+	}
+
+	// Parse spending public key K
+	KX, KY := utils.UnpackXY(input.K)
+	var K SECP256K1.G1Affine
+	K.X.SetString(KX)
+	K.Y.SetString(KY)
+
+	// Parse viewing private key v
+	var v BN254_fr.Element
+	vBytes, err := hex.DecodeString(input.PK_v)
+	if err != nil {
+		log.Printf("error decoding v: %v", err)
+		panic(fmt.Errorf("error decoding v: %v", err))
+	}
+	v.Unmarshal(vBytes)
+
+	// Parse Rs
+	var Rs []BN254.G1Affine
+	for _, rs := range input.Rs {
+		RsiX, RsiY := utils.UnpackXY(rs)
+		var Rsi BN254.G1Affine
+		Rsi.X.SetString(RsiX)
+		Rsi.Y.SetString(RsiY)
+		Rs = append(Rs, Rsi)
+	}
+
+	nBytesInViewTag := 1
+	var output RecipientAuditOutputData
+	output.SpendingPubKeys = []string{}
+
+	for i, Rsi := range Rs {
+		tmp := utils.BN254_MulG1PointandElement(&Rsi, &v)
+		calculatedViewTag := utils.ComputeViewTag("v1-1byte", &tmp)
+		if calculatedViewTag != input.ViewTags[i][:2*nBytesInViewTag] {
+			continue
+		}
+
+		S := computeSharedSecret(&v, &Rsi)
+		b := compute_b_asElement(&S)
+
+		// Stealth address = b * K (no private key needed)
+		var P SECP256K1.G1Affine
+		P.ScalarMultiplication(&K, b.BigInt(new(big.Int)))
+		output.SpendingPubKeys = append(output.SpendingPubKeys, utils.PackXY(P.X.String(), P.Y.String()))
+	}
+
+	out, err := json.Marshal(output)
+	if err != nil {
+		log.Printf("error marshalling audit output: %v", err)
+		panic(fmt.Errorf("error marshalling audit output: %v", err))
+	}
+	return string(out)
+}
+
 func compute_b(pubKey *BN254.GT) (b big.Int) {
 
 	return *pubKey.C0.B0.A0.BigInt(new(big.Int))
@@ -255,4 +318,15 @@ type RecipientInputData struct {
 type RecipientOutputData struct {
 	SpendingPubKeys  []string `json:"spendingPubKeys"`
 	SpendingPrivKeys []string `json:"spendingPrivKeys"`
+}
+
+type RecipientAuditInputData struct {
+	K        string   `json:"K"`  // spending PUBLIC key
+	PK_v     string   `json:"v"`  // viewing PRIVATE key
+	Rs       []string `json:"Rs"`
+	ViewTags []string `json:"viewTags"`
+}
+
+type RecipientAuditOutputData struct {
+	SpendingPubKeys []string `json:"spendingPubKeys"`
 }

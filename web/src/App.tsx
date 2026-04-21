@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users, Landmark } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
@@ -12,10 +12,11 @@ import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
 import PayrollPanel from "./panels/Payroll";
+import AuditPanel from "./panels/Audit";
 import ModeSelector from "./components/ModeSelector";
 
-type UserMode = "employee" | "business";
-type Tab = "keys" | "send" | "scan" | "payroll";
+type UserMode = "employee" | "business" | "government";
+type Tab = "keys" | "send" | "scan" | "payroll" | "audit";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
@@ -27,6 +28,10 @@ const EMPLOYEE_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | s
 const BUSINESS_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
   { id: "payroll", label: "Payroll", Icon: Send  },
   { id: "send",    label: "Send",    Icon: Radar },
+];
+
+const GOVERNMENT_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
+  { id: "audit", label: "Audit", Icon: Key },
 ];
 
 function keysLSKey(addr: string) { return `privy-keys-${addr.toLowerCase()}`; }
@@ -378,13 +383,13 @@ export default function App() {
   if (!userMode) {
     return <ModeSelector onSelect={m => {
       setUserMode(m);
-      setTab(m === "business" ? "payroll" : "keys");
+      setTab(m === "business" ? "payroll" : m === "government" ? "audit" : "keys");
     }} />;
   }
 
   const isXcm = mode === "xcm";
   const connectedAddress = isXcm ? subAddress : address;
-  const NAV = userMode === "employee" ? EMPLOYEE_NAV : BUSINESS_NAV;
+  const NAV = userMode === "employee" ? EMPLOYEE_NAV : userMode === "government" ? GOVERNMENT_NAV : BUSINESS_NAV;
 
   return (
     <div className="min-h-screen bg-pattern relative flex flex-col">
@@ -426,6 +431,16 @@ export default function App() {
             }`}
           >
             <Building2 size={11} /> Business
+          </button>
+          <button
+            onClick={() => { setUserMode("government"); setTab("audit"); }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+              userMode === "government"
+                ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <Landmark size={11} /> Government
           </button>
         </div>
 
@@ -543,6 +558,7 @@ export default function App() {
           {tab === "send"    && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
           {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "audit"   && <AuditPanel sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
         </main>
       </div>
 
