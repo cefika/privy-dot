@@ -28,6 +28,7 @@ interface Props {
   sourcePara: number;
   destPara: number;
   subSigner: SubstrateSigner | null;
+  connectedAddress: string;
   found: FoundAddress[];
   setFound: React.Dispatch<React.SetStateAction<FoundAddress[]>>;
   toast: (msg: string, type?: "success" | "error") => void;
@@ -43,7 +44,7 @@ interface SpendModal {
   assetId: string;        // asset ID for pallet-assets withdrawal (empty = native)
 }
 
-export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, found, setFound, toast }: Props) {
+export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, connectedAddress, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
   const [fromBlock, setFromBlock] = useState("0");
   const [progress, setProgress] = useState("");
@@ -209,6 +210,17 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       }
 
       setFound(matches);
+      if (matches.length > 0 && connectedAddress) {
+        mergeHistory(connectedAddress, matches.map(m => ({
+          id: m.stealthAddress,
+          stealthAddress: m.stealthAddress,
+          balancePas: m.balance,
+          balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+          scannedAt: new Date().toISOString(),
+          sourcePara,
+          spendingPubKey: m.spendingPubKey,
+        })));
+      }
       setProgress("");
       toast(`Scan complete — found ${matches.length} address(es)`, matches.length > 0 ? "success" : undefined);
     } catch (e: unknown) {

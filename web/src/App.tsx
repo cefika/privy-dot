@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, User, Landmark, Clock } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
-import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
+import { connectMetaMask, signerFromPrivKey, provider, deriveStealthAddress, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncementsSince, loadLastNonce, saveLastNonce, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
 import { encryptData, decryptData, isEncrypted } from "./crypto";
 
@@ -191,6 +191,60 @@ export default function App() {
     const id = setInterval(runScan, 10_000);
     return () => clearInterval(id);
   }, [subSigner, keys, sourcePara, destPara, wasmReady, runScan]);
+
+  // EVM scan — isti flow kao Substrate ali koristi provider za EVM balanse
+  const runScanEvm = useCallback(async () => {
+    if (!signer || !keys || !wasmReady) return;
+    setAutoScanning(true);
+    try {
+      const evmAddr = await signer.getAddress();
+      const srcApi = await getApi(sourcePara);
+      const { rows: announcements } = await fetchAnnouncementsSince(srcApi, 0);
+      if (announcements.length === 0) return;
+      const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
+      const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
+      const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
+      const destApi = await getApi(destPara);
+      const matches: FoundAddress[] = [];
+      for (let i = 0; i < result.spendingPrivKeys.length; i++) {
+        const privKey = result.spendingPrivKeys[i];
+        const pubKey = result.spendingPubKeys[i];
+        if (!privKey || privKey === "0x" || !pubKey) continue;
+        const evmStealth = deriveStealthAddress(pubKey);
+        const evmRaw = await provider.getBalance(evmStealth);
+        if (evmRaw > 0n) {
+          matches.push({ stealthAddress: evmStealth, spendingPrivKey: privKey, spendingPubKey: pubKey, balance: parseFloat(ethers.formatEther(evmRaw)).toFixed(4), addressType: "evm" });
+        }
+        const subStealth = deriveSubstrateStealthAddress(pubKey);
+        const subBal = await getBalance(destApi, subStealth);
+        const usdcBalance = await getAssetBalance(destApi, subStealth, 1);
+        if (subBal > 0n || usdcBalance > 0n) {
+          matches.push({ stealthAddress: subStealth, spendingPrivKey: privKey, spendingPubKey: pubKey, balance: (Number(subBal) / 1e12).toFixed(4), balancePlanck: subBal, usdcBalance, addressType: "substrate" });
+        }
+      }
+      setFoundAddresses(matches);
+      if (matches.length > 0) {
+        mergeHistory(evmAddr, matches.map(m => ({
+          id: m.stealthAddress,
+          stealthAddress: m.stealthAddress,
+          balancePas: m.balance,
+          balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+          scannedAt: new Date().toISOString(),
+          sourcePara,
+          spendingPubKey: m.spendingPubKey,
+        })));
+      }
+    } catch {}
+    finally { setAutoScanning(false); }
+  }, [signer, keys, sourcePara, destPara, wasmReady]);
+
+  // Pokreni EVM scan pri konektu i svakih 10s
+  useEffect(() => {
+    if (!signer || !keys || !wasmReady) return;
+    runScanEvm();
+    const id = setInterval(runScanEvm, 10_000);
+    return () => clearInterval(id);
+  }, [signer, keys, sourcePara, destPara, wasmReady, runScanEvm]);
 
   // Osvežava balanse već pronađenih stealth adresa svakih 15s
   const foundRef = useRef<FoundAddress[]>([]);
@@ -566,7 +620,7 @@ export default function App() {
                     </p>
                   ) : userMode === "personal" && (
                     <button
-                      onClick={runScan}
+                      onClick={isXcm ? runScan : runScanEvm}
                       className="text-xs text-zinc-500 hover:text-violet-400 flex items-center gap-1 transition-colors"
                     >
                       <Radar size={10} /> Scan now
@@ -605,7 +659,7 @@ export default function App() {
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
           {tab === "keys"    && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} />}
           {tab === "send"    && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
+          {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} connectedAddress={connectedAddress} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
           {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "audit"   && <AuditPanel sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "history" && <HistoryPanel address={connectedAddress} />}
