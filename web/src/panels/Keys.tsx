@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload, Link } from "lucide-react";
+import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload, Link, QrCode } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import type { KeyPairs } from "../types";
 import { wasmApi } from "../wasm";
 
@@ -69,6 +70,7 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
   const [importV, setImportV] = useState("");
   const [loading, setLoading] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   async function handleRegister() {
     if (!onRegisterEvm) return;
@@ -147,6 +149,13 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
             </div>
             <div className="flex gap-2 flex-wrap">
               <MetaCopyBtn text={`${keys.K}:::${keys.V}`} />
+              <button
+                onClick={() => setShowQr(v => !v)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-zinc-600 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50 transition-all"
+              >
+                <QrCode size={14} />
+                {showQr ? "Hide QR" : "Show QR"}
+              </button>
               {onRegisterEvm && (
                 <button
                   onClick={handleRegister}
@@ -158,6 +167,17 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
                 </button>
               )}
             </div>
+            {showQr && (
+              <div className="mt-4 flex flex-col items-center gap-3 p-4 bg-white rounded-xl">
+                <QRCodeSVG
+                  value={`${keys.K}:::${keys.V}`}
+                  size={200}
+                  level="M"
+                  includeMargin={false}
+                />
+                <p className="text-xs text-zinc-600 text-center">Scan to receive your meta address</p>
+              </div>
+            )}
             {onRegisterEvm && (
               <p className="text-xs text-zinc-500 mt-2">
                 Registracija zahteva mali gas fee u PAS. Nije obavezna — možeš deliti meta address ručno (Copy dugme iznad).
