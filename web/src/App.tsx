@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
+import { encryptData, decryptData, isEncrypted } from "./crypto";
 
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
@@ -22,10 +23,28 @@ const NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; cl
 ];
 
 function keysLSKey(addr: string) { return `privy-keys-${addr.toLowerCase()}`; }
-function loadKeys(addr: string): KeyPairs | null {
-  try { return JSON.parse(localStorage.getItem(keysLSKey(addr)) ?? "null"); } catch { return null; }
+
+async function saveKeys(addr: string, k: KeyPairs, password: string) {
+  const encrypted = await encryptData(JSON.stringify(k), password);
+  localStorage.setItem(keysLSKey(addr), encrypted);
 }
-function saveKeys(addr: string, k: KeyPairs) { localStorage.setItem(keysLSKey(addr), JSON.stringify(k)); }
+
+async function loadKeys(addr: string, password: string): Promise<KeyPairs | null> {
+  try {
+    const raw = localStorage.getItem(keysLSKey(addr));
+    if (!raw) return null;
+    if (!isEncrypted(raw)) {
+      // Migrate plaintext → encrypted on first load
+      const keys = JSON.parse(raw) as KeyPairs;
+      await saveKeys(addr, keys, password);
+      return keys;
+    }
+    const plain = await decryptData(raw, password);
+    return JSON.parse(plain) as KeyPairs;
+  } catch {
+    return null; // Wrong password or corrupt data
+  }
+}
 
 let toastId = 0;
 
@@ -60,6 +79,15 @@ export default function App() {
   const [foundAddresses, setFoundAddresses] = useState<FoundAddress[]>([]);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Password / encryption state
+  const [password, setPassword] = useState<string>("");
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordPurpose, setPasswordPurpose] = useState<"unlock" | "set">("set");
+  const pendingAddr = useRef<string>("");
+  const passwordResolve = useRef<((p: string) => void) | null>(null);
 
   // Track which EVM address has already been registered to avoid duplicate MetaMask popups
   const registeredEvmAddress = useRef<string>("");
@@ -189,10 +217,49 @@ export default function App() {
     return () => { cancelled = true; };
   }, [subSigner, sourcePara]);
 
-  function onKeysChange(k: KeyPairs) {
+  // Ask for password via modal, returns the entered password
+  function askPassword(purpose: "unlock" | "set"): Promise<string> {
+    return new Promise((resolve) => {
+      setPasswordPurpose(purpose);
+      setPasswordInput("");
+      setPasswordError("");
+      setShowPasswordModal(true);
+      passwordResolve.current = resolve;
+    });
+  }
+
+  async function handlePasswordSubmit() {
+    if (!passwordInput.trim()) {
+      setPasswordError("Password cannot be empty");
+      return;
+    }
+    if (passwordPurpose === "unlock" && pendingAddr.current) {
+      const addr = pendingAddr.current;
+      const keys = await loadKeys(addr, passwordInput);
+      if (!keys) {
+        setPasswordError("Wrong password or no keys found");
+        return;
+      }
+      setPassword(passwordInput);
+      setKeys(keys);
+      setShowPasswordModal(false);
+      passwordResolve.current?.(passwordInput);
+      passwordResolve.current = null;
+    } else {
+      // "set" — save new keys with this password
+      setPassword(passwordInput);
+      setShowPasswordModal(false);
+      passwordResolve.current?.(passwordInput);
+      passwordResolve.current = null;
+    }
+  }
+
+  async function onKeysChange(k: KeyPairs) {
     setKeys(k);
     const addr = mode === "evm" ? address : subAddress;
-    if (addr) saveKeys(addr, k);
+    if (!addr) return;
+    const pwd = password || await askPassword("set");
+    if (pwd) await saveKeys(addr, k, pwd);
   }
 
   function addToast(message: string, type: Toast["type"] = "info") {
@@ -216,49 +283,67 @@ export default function App() {
     }
   }
 
+  async function loadKeysForAddr(addr: string): Promise<KeyPairs | null> {
+    const raw = localStorage.getItem(keysLSKey(addr));
+    if (!raw) return null;
+    if (!isEncrypted(raw)) {
+      // Plaintext migration — ask for new password
+      const pwd = await askPassword("set");
+      const keys = JSON.parse(raw) as KeyPairs;
+      await saveKeys(addr, keys, pwd);
+      setPassword(pwd);
+      return keys;
+    }
+    pendingAddr.current = addr;
+    const pwd = password || await askPassword("unlock");
+    const keys = await loadKeys(addr, pwd);
+    if (keys) setPassword(pwd);
+    return keys;
+  }
+
   async function handleMetaMaskFromModal() {
     try {
       const { signer: s, address: a } = await connectMetaMask();
       setSigner(s); setAddress(a);
-      setKeys(loadKeys(a));
       setMode("evm");
       setShowWalletModal(false);
+      setKeys(await loadKeysForAddr(a));
       addToast("MetaMask connected!", "success");
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : "MetaMask not found", "error");
     }
   }
 
-  function handlePrivKeyFromModal() {
+  async function handlePrivKeyFromModal() {
     try {
       const w = signerFromPrivKey(privKeyModal.trim());
       setSigner(w); setAddress(w.address);
-      setKeys(loadKeys(w.address));
       setMode("evm");
       setShowWalletModal(false);
       setPrivKeyModal("");
+      setKeys(await loadKeysForAddr(w.address));
       addToast("Connected via private key", "success");
     } catch { addToast("Invalid private key", "error"); }
   }
 
-  function connectExtensionAccount(account: InjectedAccountWithMeta) {
+  async function connectExtensionAccount(account: InjectedAccountWithMeta) {
     const s = signerFromExtensionAccount(account);
     const addr = signerAddress(s);
     setSubSigner(s); setSubAddress(addr);
     setMode("xcm");
     setShowWalletModal(false);
-    setKeys(loadKeys(addr));
+    setKeys(await loadKeysForAddr(addr));
     addToast(`Connected: ${account.meta.name ?? addr.slice(0, 8)}`, "success");
   }
 
-  function connectDevAccount(name: DevAccount) {
+  async function connectDevAccount(name: DevAccount) {
     const s = getDevAccount(name);
     const addr = signerAddress(s);
     setSubSigner(s); setSubAddress(addr);
     setDevAccount(name);
     setMode("xcm");
     setShowWalletModal(false);
-    setKeys(loadKeys(addr));
+    setKeys(await loadKeysForAddr(addr));
     addToast(`Connected as ${name.charAt(0).toUpperCase() + name.slice(1)}`, "success");
   }
 
@@ -267,6 +352,7 @@ export default function App() {
     setSubSigner(null); setSubAddress("");
     setKeys(null); setFoundAddresses([]); setSubPas(null); setSubUsdc(null);
     setExtensionAccounts([]); setShowWalletModal(false);
+    setPassword("");
     disconnectAll();
   }
 
@@ -534,6 +620,39 @@ export default function App() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="relative bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-xs shadow-2xl p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <Lock size={15} className="text-polka-400" />
+              <h2 className="text-sm font-semibold text-zinc-100">
+                {passwordPurpose === "unlock" ? "Unlock Keys" : "Set Encryption Password"}
+              </h2>
+            </div>
+            <p className="text-xs text-zinc-400">
+              {passwordPurpose === "unlock"
+                ? "Enter your password to decrypt stored keys."
+                : "Choose a password to encrypt your keys in localStorage."}
+            </p>
+            <input
+              autoFocus
+              type="password"
+              value={passwordInput}
+              onChange={e => { setPasswordInput(e.target.value); setPasswordError(""); }}
+              onKeyDown={e => e.key === "Enter" && handlePasswordSubmit()}
+              className="input-field w-full text-sm"
+              placeholder="Password…"
+            />
+            {passwordError && <p className="text-xs text-red-400">{passwordError}</p>}
+            <button onClick={handlePasswordSubmit} className="btn-primary w-full text-sm py-2">
+              {passwordPurpose === "unlock" ? "Unlock" : "Set Password"}
+            </button>
           </div>
         </div>
       )}
