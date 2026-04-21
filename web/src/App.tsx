@@ -2,16 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
-import { configure, connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
-import { contractAddress } from "./config/deployment";
+import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
+
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
 import type { KeyPairs, Toast, FoundAddress } from "./types";
 import KeysPanel from "./panels/Keys";
 import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
-
-const RPC_URL = (import.meta.env.VITE_RPC_URL as string | undefined) ?? `${window.location.origin}/eth-rpc`;
 
 type Tab = "keys" | "send" | "scan";
 type Mode = "evm" | "xcm";
@@ -65,10 +63,6 @@ export default function App() {
 
   // Track which EVM address has already been registered to avoid duplicate MetaMask popups
   const registeredEvmAddress = useRef<string>("");
-
-  useEffect(() => {
-    configure(RPC_URL, contractAddress ?? "");
-  }, []);
 
   useEffect(() => { initWasm().then(() => setWasmReady(true)).catch(console.error); }, []);
 
@@ -337,9 +331,6 @@ export default function App() {
 
         {/* Block / info */}
         <div className="ml-auto flex items-center gap-4 text-xs text-text-tertiary">
-          {!isXcm && contractAddress && (
-            <span className="font-mono text-text-muted">{contractAddress.slice(0, 10)}…{contractAddress.slice(-6)}</span>
-          )}
           {!isXcm && blockNumber && (
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
