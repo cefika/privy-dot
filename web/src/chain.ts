@@ -83,38 +83,14 @@ export async function registerMetaAddressViaPrecompile(
   return receipt.hash;
 }
 
-// ── ABI for ECPDKSAP — pvm-contract-macros, no registry ──────────────────────
-export const ABI = [
-  "function sendEthViaProxy(address payable stealthAddress, bytes R, bytes viewTag) external payable",
-  "function ecpdksapSchemeId() external view returns (uint256)",
-  "event Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)",
-];
-
-// Mutable config — set by App before rendering panels
-let _rpcUrl: string = import.meta.env.VITE_RPC_URL ?? (typeof window !== "undefined" ? `${window.location.origin}/eth-rpc` : "http://127.0.0.1:8545");
-let _contractAddress = "";
-let _providerInstance = new ethers.JsonRpcProvider(_rpcUrl, undefined, { staticNetwork: true });
-
-export function configure(rpcUrl: string, contractAddress: string) {
-  if (rpcUrl !== _rpcUrl) {
-    _rpcUrl = rpcUrl;
-    _providerInstance = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
-  }
-  _contractAddress = contractAddress;
-}
+const _rpcUrl: string = import.meta.env.VITE_RPC_URL ?? (typeof window !== "undefined" ? `${window.location.origin}/eth-rpc` : "http://127.0.0.1:8545");
+const _providerInstance = new ethers.JsonRpcProvider(_rpcUrl, undefined, { staticNetwork: true });
 
 // Explicit wrappers — avoids ethers v6 ENS resolution on unknown networks
 export const provider = {
   getBalance: (addr: string) => _providerInstance.getBalance(addr),
   getBlockNumber: () => _providerInstance.getBlockNumber(),
 };
-
-export function getContract(signerOrProvider?: ethers.Signer | ethers.Provider) {
-  if (!_contractAddress.startsWith("0x")) {
-    throw new Error("Contract address not set");
-  }
-  return new ethers.Contract(_contractAddress, ABI, signerOrProvider ?? _providerInstance);
-}
 
 export function signerFromPrivKey(privKey: string): ethers.Wallet {
   return new ethers.Wallet(privKey, _providerInstance);
