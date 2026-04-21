@@ -199,8 +199,9 @@ export default function App() {
     try {
       const evmAddr = await signer.getAddress();
       const srcApi = await getApi(sourcePara);
-      const { rows: announcements } = await fetchAnnouncementsSince(srcApi, 0);
-      if (announcements.length === 0) return;
+      const fromNonce = loadLastNonce(evmAddr);
+      const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(srcApi, fromNonce);
+      if (announcements.length === 0) { saveLastNonce(evmAddr, nextNonce); return; }
       const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
       const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
       const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
@@ -222,6 +223,7 @@ export default function App() {
           matches.push({ stealthAddress: subStealth, spendingPrivKey: privKey, spendingPubKey: pubKey, balance: (Number(subBal) / 1e12).toFixed(4), balancePlanck: subBal, usdcBalance, addressType: "substrate" });
         }
       }
+      saveLastNonce(evmAddr, nextNonce);
       setFoundAddresses(matches);
       if (matches.length > 0) {
         mergeHistory(evmAddr, matches.map(m => ({

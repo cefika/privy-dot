@@ -150,8 +150,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     try {
       // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
       const api = await getApi(sourcePara);
-      const { rows: announcements } = await fetchAnnouncementsSince(api, 0);
-      setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
+      const fromNonce = loadLastNonce(connectedAddress);
+      const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(api, fromNonce);
+      setProgress(`Found ${announcements.length} new announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
       const viewTags: string[] = [];
@@ -162,8 +163,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       }
 
       if (Rs.length === 0) {
+        if (connectedAddress) saveLastNonce(connectedAddress, nextNonce);
         setFound([]); setProgress("");
-        toast("No announcements found");
+        toast("No new announcements since last scan");
         setScanning(false);
         return;
       }
@@ -209,6 +211,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         }
       }
 
+      if (connectedAddress) saveLastNonce(connectedAddress, nextNonce);
       setFound(matches);
       if (matches.length > 0 && connectedAddress) {
         mergeHistory(connectedAddress, matches.map(m => ({
