@@ -6,6 +6,7 @@ declare global {
   function get_meta(a: string): string;
   function send(a: string): string;
   function scan(a: string): string;
+  function scan_audit(a: string): string;
 }
 
 let ready = false;
@@ -63,4 +64,7 @@ export const wasmApi = {
 
   scan: (k: string, v: string, Rs: string[], viewTags: string[]): Promise<ScanResult> =>
     safe(() => JSON.parse(scan(JSON.stringify({ k: padHex(k), v: padHex(v), Rs, viewTags })))),
+
+  scanAudit: (K: string, v: string, Rs: string[], viewTags: string[]): Promise<{ spendingPubKeys: string[] }> =>
+    safe(() => JSON.parse(scan_audit(JSON.stringify({ K, v: padHex(v), Rs, viewTags })))),
 };

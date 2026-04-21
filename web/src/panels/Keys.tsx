@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload, Link, QrCode } from "lucide-react";
+import { Eye, EyeOff, RefreshCw, Copy, Check, Download, Upload, Link, QrCode, Shield } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { KeyPairs } from "../types";
 import { wasmApi } from "../wasm";
@@ -13,6 +13,57 @@ interface Props {
 }
 
 function short(s: string) { return s.slice(0, 18) + "…" + s.slice(-6); }
+
+function ViewingKeyExport({ viewingKey, viewingPubKey, spendingPubKey }: { viewingKey: string; viewingPubKey: string; spendingPubKey: string }) {
+  const [copied, setCopied] = useState<"key" | "pkg" | null>(null);
+  const pkg = JSON.stringify({ spendingPubKey, viewingKey, viewingPubKey, purpose: "audit", generated: new Date().toISOString() }, null, 2);
+
+  function copy(type: "key" | "pkg", text: string) {
+    navigator.clipboard.writeText(text);
+    setCopied(type);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  function download() {
+    const blob = new Blob([pkg], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "viewing-key-audit.json"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="flex gap-2 flex-wrap">
+      <button
+        onClick={() => copy("key", viewingKey)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+          copied === "key"
+            ? "border-amber-600 bg-amber-950/40 text-amber-400"
+            : "border-zinc-600 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"
+        }`}
+      >
+        {copied === "key" ? <Check size={12} /> : <Copy size={12} />}
+        {copied === "key" ? "Copied!" : "Copy viewing key"}
+      </button>
+      <button
+        onClick={() => copy("pkg", pkg)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+          copied === "pkg"
+            ? "border-amber-600 bg-amber-950/40 text-amber-400"
+            : "border-zinc-600 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"
+        }`}
+      >
+        {copied === "pkg" ? <Check size={12} /> : <Copy size={12} />}
+        {copied === "pkg" ? "Copied!" : "Copy audit package"}
+      </button>
+      <button
+        onClick={download}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-600 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50 transition-all"
+      >
+        <Download size={12} /> Download JSON
+      </button>
+    </div>
+  );
+}
 
 function CopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -209,6 +260,21 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
               <KeyField label="Public Key (V)" value={keys.V} />
               <KeyField label="Private Key (v)" value={keys.v} secret />
             </div>
+          </div>
+
+          {/* Compliance / Viewing Key Export */}
+          <div className="card border-amber-700/30 bg-amber-950/10">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield size={14} className="text-amber-400" />
+              <h3 className="font-semibold text-zinc-100">Compliance & Audit</h3>
+              <span className="text-xs text-zinc-500 ml-auto">For regulators only</span>
+            </div>
+            <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+              Your <span className="text-amber-300 font-medium">viewing key (v)</span> lets a regulator or auditor
+              scan all incoming payments to your stealth addresses — without the ability to spend funds.
+              Share only when legally required.
+            </p>
+            <ViewingKeyExport viewingKey={keys.v} viewingPubKey={keys.V} spendingPubKey={keys.K} />
           </div>
 
           {/* Actions */}
