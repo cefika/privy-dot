@@ -35,8 +35,7 @@ export async function getExtensionAccounts(): Promise<InjectedAccountWithMeta[]>
 // ── Parachain config ──────────────────────────────────────────────────────────
 
 export const PARACHAINS: Record<number, { ws: string; label: string }> = {
-  1000: { ws: "ws://127.0.0.1:9944", label: "Para 1000" },
-  2000: { ws: "ws://127.0.0.1:9935", label: "Para 2000" },
+  5186: { ws: import.meta.env.VITE_WS_URL ?? "ws://127.0.0.1:9944", label: "Privy Dot (Para 5186)" },
 };
 
 const apiCache = new Map<number, ApiPromise>();

@@ -51,8 +51,8 @@ export default function App() {
   const [showDevInModal, setShowDevInModal] = useState(false);
   const [showPrivInModal, setShowPrivInModal] = useState(false);
   const [privKeyModal, setPrivKeyModal] = useState("");
-  const [sourcePara, setSourcePara] = useState<number>(1000);
-  const [destPara, setDestPara] = useState<number>(2000);
+  const [sourcePara, setSourcePara] = useState<number>(5186);
+  const [destPara, setDestPara] = useState<number>(5186);
   const [subPas, setSubPas] = useState<string | null>(null);
   const [subUsdc, setSubUsdc] = useState<string | null>(null);
   const [autoScanning, setAutoScanning] = useState(false);
