@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users, Landmark } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users, Landmark, Clock } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
@@ -13,16 +13,18 @@ import SendPanel from "./panels/Send";
 import ScanPanel from "./panels/Scan";
 import PayrollPanel from "./panels/Payroll";
 import AuditPanel from "./panels/Audit";
+import HistoryPanel, { mergeHistory } from "./panels/History";
 import ModeSelector from "./components/ModeSelector";
 
 type UserMode = "employee" | "business" | "government";
-type Tab = "keys" | "send" | "scan" | "payroll" | "audit";
+type Tab = "keys" | "send" | "scan" | "payroll" | "audit" | "history";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
 const EMPLOYEE_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "keys", label: "My Keys",  Icon: Key   },
-  { id: "scan", label: "Scan",     Icon: Radar },
+  { id: "keys",    label: "My Keys", Icon: Key   },
+  { id: "scan",    label: "Scan",    Icon: Radar },
+  { id: "history", label: "History", Icon: Clock },
 ];
 
 const BUSINESS_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
@@ -165,7 +167,22 @@ export default function App() {
             usdcBalance,
           });
         }
-        if (!cancelled) setFoundAddresses(matches);
+        if (!cancelled) {
+          setFoundAddresses(matches);
+          if (matches.length > 0) {
+            const addr = signerAddress(subSigner);
+            const now = new Date().toISOString();
+            mergeHistory(addr, matches.map(m => ({
+              id: m.stealthAddress + now,
+              stealthAddress: m.stealthAddress,
+              balancePas: m.balance,
+              balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+              scannedAt: now,
+              sourcePara,
+              spendingPubKey: m.spendingPubKey,
+            })));
+          }
+        }
       } catch {}
       finally { setAutoScanning(false); }
     })();
@@ -559,6 +576,7 @@ export default function App() {
           {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
           {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
           {tab === "audit"   && <AuditPanel sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "history" && <HistoryPanel address={connectedAddress} />}
         </main>
       </div>
 

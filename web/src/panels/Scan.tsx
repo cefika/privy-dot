@@ -18,6 +18,7 @@ import {
 import { signerAddress } from "../substrate";
 import type { SubstrateSigner } from "../substrate";
 import type { KeyPairs, FoundAddress } from "../types";
+import { mergeHistory } from "./History";
 
 interface Props {
   mode: "evm" | "xcm";
@@ -115,6 +116,18 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       }
 
       setFound(matches);
+      if (matches.length > 0 && subSigner) {
+        const now = new Date().toISOString();
+        mergeHistory(signerAddress(subSigner), matches.map(m => ({
+          id: m.stealthAddress + now,
+          stealthAddress: m.stealthAddress,
+          balancePas: m.balance,
+          balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+          scannedAt: now,
+          sourcePara,
+          spendingPubKey: m.spendingPubKey,
+        })));
+      }
       setProgress("");
       toast(`Scan complete — found ${matches.length} address(es)`, matches.length > 0 ? "success" : undefined);
     } catch (e: unknown) {

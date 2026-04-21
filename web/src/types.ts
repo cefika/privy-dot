@@ -32,3 +32,13 @@ export interface Toast {
   type: "success" | "error" | "info";
   message: string;
 }
+
+export interface HistoryEntry {
+  id: string;              // stealthAddress + scannedAt
+  stealthAddress: string;
+  balancePas: string;      // formatted, e.g. "1.5000"
+  balanceUsdc: string;     // formatted, e.g. "100.00"
+  scannedAt: string;       // ISO string
+  sourcePara: number;
+  spendingPubKey: string;
+}
