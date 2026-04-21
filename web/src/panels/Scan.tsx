@@ -5,7 +5,9 @@ import { wasmApi } from "../wasm";
 import { provider, deriveStealthAddress, signerFromPrivKey } from "../chain";
 import {
   getApi,
-  fetchAnnouncements,
+  fetchAnnouncementsSince,
+  loadLastNonce,
+  saveLastNonce,
   getBalance,
   getAssetBalance,
   deriveSubstrateStealthAddress,
@@ -14,8 +16,8 @@ import {
   withdrawFromStealth,
   sponsorGas,
   getSponsorBalance,
+  signerAddress,
 } from "../substrate";
-import { signerAddress } from "../substrate";
 import type { SubstrateSigner } from "../substrate";
 import type { KeyPairs, FoundAddress } from "../types";
 import { mergeHistory } from "./History";
@@ -55,8 +57,10 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     setScanning(true); setFound([]); setProgress("Fetching announcements from Para " + sourcePara + "…");
     try {
       const api = await getApi(sourcePara);
-      const announcements = await fetchAnnouncements(api);
-      setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
+      const addr = subSigner ? signerAddress(subSigner) : "";
+      const fromNonce = loadLastNonce(addr);
+      const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(api, fromNonce);
+      setProgress(`Found ${announcements.length} new announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
       const viewTags: string[] = [];
@@ -69,8 +73,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       }
 
       if (Rs.length === 0) {
+        if (addr) saveLastNonce(addr, nextNonce);
         setFound([]); setProgress("");
-        toast("No announcements found on this parachain");
+        toast("No new announcements since last scan");
         setScanning(false);
         return;
       }
@@ -115,10 +120,11 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         });
       }
 
+      if (addr) saveLastNonce(addr, nextNonce);
       setFound(matches);
       if (matches.length > 0 && subSigner) {
         const now = new Date().toISOString();
-        mergeHistory(signerAddress(subSigner), matches.map(m => ({
+        mergeHistory(addr, matches.map(m => ({
           id: m.stealthAddress + now,
           stealthAddress: m.stealthAddress,
           balancePas: m.balance,
@@ -144,7 +150,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     try {
       // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
       const api = await getApi(sourcePara);
-      const announcements = await fetchAnnouncements(api);
+      const { rows: announcements } = await fetchAnnouncementsSince(api, 0);
       setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
@@ -362,11 +368,25 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
             </div>
           )}
           {isXcm && (
-            <div className="flex-1">
+            <div className="flex-1 space-y-1">
               <p className="text-xs text-zinc-400">
                 Announcements: <span className="font-mono text-zinc-300">Para {sourcePara}</span>
                 {" "}→ Balances: <span className="font-mono text-zinc-300">Para {destPara}</span>
               </p>
+              {subSigner && (() => {
+                const n = loadLastNonce(signerAddress(subSigner));
+                return n > 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    Scanning from announcement #{n} ·{" "}
+                    <button
+                      className="text-violet-400 hover:text-violet-300 underline"
+                      onClick={() => { saveLastNonce(signerAddress(subSigner!), 0); toast("Reset — next scan will check all announcements"); }}
+                    >
+                      Rescan from beginning
+                    </button>
+                  </p>
+                ) : null;
+              })()}
             </div>
           )}
           <button

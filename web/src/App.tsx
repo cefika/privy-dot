@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users, Landmark, Clock } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
-import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncements, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
+import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncementsSince, loadLastNonce, saveLastNonce, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
 import { encryptData, decryptData, isEncrypted } from "./crypto";
 
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
@@ -141,9 +141,12 @@ export default function App() {
     setAutoScanning(true);
     (async () => {
       try {
+        const addr = signerAddress(subSigner);
         const srcApi = await getApi(sourcePara);
-        const announcements = await fetchAnnouncements(srcApi);
-        if (announcements.length === 0 || cancelled) return;
+        const fromNonce = loadLastNonce(addr);
+        const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(srcApi, fromNonce);
+        if (cancelled) return;
+        if (announcements.length === 0) { saveLastNonce(addr, nextNonce); return; }
         const Rs = announcements.map(a => bytes64ToR(a.ephemeralPubkey));
         const viewTags = announcements.map(a => a.viewTag[0].toString(16).padStart(2, "0"));
         const result = await wasmApi.scan(keys.k, keys.v, Rs, viewTags);
@@ -168,9 +171,9 @@ export default function App() {
           });
         }
         if (!cancelled) {
+          saveLastNonce(addr, nextNonce);
           setFoundAddresses(matches);
           if (matches.length > 0) {
-            const addr = signerAddress(subSigner);
             const now = new Date().toISOString();
             mergeHistory(addr, matches.map(m => ({
               id: m.stealthAddress + now,
