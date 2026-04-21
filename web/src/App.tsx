@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, Users, Landmark, Clock } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, User, Landmark, Clock } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncementsSince, loadLastNonce, saveLastNonce, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
@@ -16,13 +16,14 @@ import AuditPanel from "./panels/Audit";
 import HistoryPanel, { mergeHistory } from "./panels/History";
 import ModeSelector from "./components/ModeSelector";
 
-type UserMode = "employee" | "business" | "government";
+type UserMode = "personal" | "business" | "government";
 type Tab = "keys" | "send" | "scan" | "payroll" | "audit" | "history";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
-const EMPLOYEE_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
+const PERSONAL_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
   { id: "keys",    label: "My Keys", Icon: Key   },
+  { id: "send",    label: "Send",    Icon: Send  },
   { id: "scan",    label: "Scan",    Icon: Radar },
   { id: "history", label: "History", Icon: Clock },
 ];
@@ -169,13 +170,12 @@ export default function App() {
       saveLastNonce(addr, nextNonce);
       setFoundAddresses(matches);
       if (matches.length > 0) {
-        const now = new Date().toISOString();
         mergeHistory(addr, matches.map(m => ({
-          id: m.stealthAddress + now,
+          id: m.stealthAddress,
           stealthAddress: m.stealthAddress,
           balancePas: m.balance,
           balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
-          scannedAt: now,
+          scannedAt: new Date().toISOString(),
           sourcePara,
           spendingPubKey: m.spendingPubKey,
         })));
@@ -427,9 +427,11 @@ export default function App() {
     }} />;
   }
 
+
+
   const isXcm = mode === "xcm";
   const connectedAddress = isXcm ? subAddress : address;
-  const NAV = userMode === "employee" ? EMPLOYEE_NAV : userMode === "government" ? GOVERNMENT_NAV : BUSINESS_NAV;
+  const NAV = userMode === "personal" ? PERSONAL_NAV : userMode === "government" ? GOVERNMENT_NAV : BUSINESS_NAV;
 
   return (
     <div className="min-h-screen bg-pattern relative flex flex-col">
@@ -453,14 +455,14 @@ export default function App() {
         {/* Mode switcher */}
         <div className="flex items-center gap-1 ml-2">
           <button
-            onClick={() => { setUserMode("employee"); setTab("keys"); }}
+            onClick={() => { setUserMode("personal"); setTab("keys"); }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              userMode === "employee"
+              userMode === "personal"
                 ? "bg-polka-500/15 text-polka-300 border border-polka-500/30"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
-            <Users size={11} /> Employee
+            <User size={11} /> Personal
           </button>
           <button
             onClick={() => { setUserMode("business"); setTab("payroll"); }}
@@ -562,7 +564,7 @@ export default function App() {
                     <p className="text-xs text-zinc-500 flex items-center gap-1">
                       <Loader size={10} className="animate-spin" /> scanning…
                     </p>
-                  ) : userMode === "employee" && (
+                  ) : userMode === "personal" && (
                     <button
                       onClick={runScan}
                       className="text-xs text-zinc-500 hover:text-violet-400 flex items-center gap-1 transition-colors"

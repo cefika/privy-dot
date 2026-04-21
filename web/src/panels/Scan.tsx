@@ -123,13 +123,12 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       if (addr) saveLastNonce(addr, nextNonce);
       setFound(matches);
       if (matches.length > 0 && subSigner) {
-        const now = new Date().toISOString();
         mergeHistory(addr, matches.map(m => ({
-          id: m.stealthAddress + now,
+          id: m.stealthAddress,
           stealthAddress: m.stealthAddress,
           balancePas: m.balance,
           balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
-          scannedAt: now,
+          scannedAt: new Date().toISOString(),
           sourcePara,
           spendingPubKey: m.spendingPubKey,
         })));

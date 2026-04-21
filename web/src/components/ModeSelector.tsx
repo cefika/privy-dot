@@ -1,7 +1,7 @@
-import { Users, Building2, ArrowRight, Landmark } from "lucide-react";
+import { User, Building2, ArrowRight, Landmark } from "lucide-react";
 
 interface Props {
-  onSelect: (mode: "employee" | "business" | "government") => void;
+  onSelect: (mode: "personal" | "business" | "government") => void;
 }
 
 export default function ModeSelector({ onSelect }: Props) {
@@ -26,20 +26,20 @@ export default function ModeSelector({ onSelect }: Props) {
 
         {/* Mode cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {/* Employee */}
+          {/* Personal */}
           <button
-            onClick={() => onSelect("employee")}
+            onClick={() => onSelect("personal")}
             className="group relative text-left p-6 rounded-2xl border border-white/[0.08] bg-surface-900/60 backdrop-blur-sm hover:border-polka-500/40 hover:bg-surface-900/80 transition-all duration-200 shadow-lg"
           >
             <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-polka-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="relative space-y-4">
               <div className="w-10 h-10 rounded-xl bg-polka-500/10 border border-polka-500/20 flex items-center justify-center group-hover:bg-polka-500/20 transition-colors">
-                <Users size={20} className="text-polka-400" />
+                <User size={20} className="text-polka-400" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-text-primary mb-1">Employee</h2>
+                <h2 className="text-lg font-semibold text-text-primary mb-1">Personal</h2>
                 <p className="text-sm text-text-secondary leading-relaxed">
-                  Receive private salary payments. Generate stealth keys, share your meta address with HR, and scan for incoming payments.
+                  Send and receive private payments. Generate stealth keys, share your meta address, and scan for incoming funds.
                 </p>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-polka-400 font-medium">
