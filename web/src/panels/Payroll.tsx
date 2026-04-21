@@ -29,6 +29,7 @@ interface PayrollRow {
   name: string;
   metaAddress: string;
   amount: string;
+  tokenType: TokenType;
   // Computed
   K?: string;
   V?: string;
@@ -55,20 +56,24 @@ function parseCSV(text: string): PayrollRow[] {
     if (line.toLowerCase().includes("name") && line.toLowerCase().includes("meta")) continue;
     const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
     if (cols.length < 3) continue;
-    const [name, metaAddress, amount] = cols;
-    if (!name || !metaAddress || !amount) continue;
-    rows.push({ id: id++, name, metaAddress, amount, status: "pending" });
+    const [name, metaAddress, amountRaw] = cols;
+    if (!name || !metaAddress || !amountRaw) continue;
+    // Parse "100 PAS", "100 USDC", or plain "100" (defaults to PAS)
+    const match = amountRaw.trim().match(/^([\d.]+)\s*(pas|usdc)?$/i);
+    if (!match) continue;
+    const amount = match[1];
+    const tokenType: TokenType = match[2]?.toLowerCase() === "usdc" ? "usdc" : "pas";
+    rows.push({ id: id++, name, metaAddress, amount, tokenType, status: "pending" });
   }
   return rows;
 }
 
 const EXAMPLE_CSV = `name,meta_address,amount
-Alice Smith,K_PUBLIC_KEY:::V_PUBLIC_KEY,100
-Bob Jones,K_PUBLIC_KEY:::V_PUBLIC_KEY,150`;
+Alice Smith,K_PUBLIC_KEY:::V_PUBLIC_KEY,100 PAS
+Bob Jones,K_PUBLIC_KEY:::V_PUBLIC_KEY,150 USDC`;
 
 export default function PayrollPanel({ mode, signer, subSigner, sourcePara, destPara, toast }: Props) {
   const [rows, setRows] = useState<PayrollRow[]>([]);
-  const [tokenType, setTokenType] = useState<TokenType>("pas");
   const [running, setRunning] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [dragOver, setDragOver] = useState(false);
@@ -85,7 +90,7 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
       const text = e.target?.result as string;
       const parsed = parseCSV(text);
       if (parsed.length === 0) {
-        toast("No valid rows found in CSV. Check format: name, meta_address, amount", "error");
+        toast("No valid rows found in CSV. Check format: name, meta_address, amount (e.g. 100 PAS)", "error");
         return;
       }
       setRows(parsed);
@@ -115,9 +120,9 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
   }
 
   function exportResults() {
-    const lines = ["name,meta_address,amount,stealth_address,tx_hash,status"];
+    const lines = ["name,meta_address,amount,token,stealth_address,tx_hash,status"];
     for (const r of rows) {
-      lines.push([r.name, r.metaAddress, r.amount, r.stealthAddress ?? "", r.txHash ?? "", r.status].join(","));
+      lines.push([r.name, r.metaAddress, r.amount, r.tokenType.toUpperCase(), r.stealthAddress ?? "", r.txHash ?? "", r.status].join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -125,12 +130,16 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
     URL.revokeObjectURL(url);
   }
 
-  async function computeAll() {
+  async function computeAll(): Promise<PayrollRow[]> {
     const pending = rows.filter(r => r.status === "pending" && !r.stealthAddress);
+    // Build a local snapshot so sendAll can use fresh data without stale closure
+    let snapshot = rows.map(r => ({ ...r }));
     for (const row of pending) {
       const meta = parseMetaAddress(row.metaAddress);
       if (!meta) {
-        updateRow(row.id, { status: "error", error: "Invalid meta address format (expected K:::V)" });
+        const patch = { status: "error" as const, error: "Invalid meta address format (expected K:::V)" };
+        updateRow(row.id, patch);
+        snapshot = snapshot.map(r => r.id === row.id ? { ...r, ...patch } : r);
         continue;
       }
       updateRow(row.id, { status: "computing" });
@@ -138,18 +147,23 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
         const result = await wasmApi.send(meta.K, meta.V);
         const stealthAddress = isXcm
           ? deriveSubstrateStealthAddress(result.spendingPubKey)
-          : result.spendingPubKey; // EVM uses compute address
-        updateRow(row.id, {
+          : result.spendingPubKey;
+        const patch = {
           K: meta.K, V: meta.V,
           stealthAddress,
           ephemeralKey: result.R,
           viewTag: result.viewTag,
-          status: "pending",
-        });
+          status: "pending" as const,
+        };
+        updateRow(row.id, patch);
+        snapshot = snapshot.map(r => r.id === row.id ? { ...r, ...patch } : r);
       } catch (e: unknown) {
-        updateRow(row.id, { status: "error", error: e instanceof Error ? e.message : "Computation failed" });
+        const patch = { status: "error" as const, error: e instanceof Error ? e.message : "Computation failed" };
+        updateRow(row.id, patch);
+        snapshot = snapshot.map(r => r.id === row.id ? { ...r, ...patch } : r);
       }
     }
+    return snapshot;
   }
 
   async function sendAll() {
@@ -158,17 +172,17 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
       return;
     }
     setRunning(true);
-    // First compute any that aren't computed yet
-    await computeAll();
+    const currentRows = await computeAll();
 
-    const toSend = rows.filter(r => r.status === "pending" && r.stealthAddress);
+    const toSend = currentRows.filter(r => r.status === "pending" && r.stealthAddress);
     for (const row of toSend) {
       updateRow(row.id, { status: "sending" });
       try {
         let txHash = "";
         if (!isXcm && signer && row.stealthAddress && row.ephemeralKey && row.viewTag) {
           const ephBytes = rToBytes64(row.ephemeralKey);
-          const vtBytes = new Uint8Array([parseInt(row.viewTag, 16)]);
+          const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
+          const vtBytes = new Uint8Array([vtByte, 0x00]);
           const stealthBytes = new Uint8Array(32);
           const stealthHex = row.stealthAddress.startsWith("0x") ? row.stealthAddress.slice(2) : row.stealthAddress;
           for (let i = 0; i < 32; i++) stealthBytes[i] = parseInt(stealthHex.slice(i * 2, i * 2 + 2), 16);
@@ -176,10 +190,10 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
         } else if (isXcm && subSigner && row.stealthAddress && row.ephemeralKey && row.viewTag) {
           const api = await getApi(sourcePara);
           const ephBytes = rToBytes64(row.ephemeralKey);
-          const vtBytes = new Uint8Array([parseInt(row.viewTag, 16)]);
+          const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
+          const vtBytes = new Uint8Array([vtByte, 0x00]);
           const meta = new Uint8Array(32);
-          const amountBig = BigInt(Math.round(parseFloat(row.amount) * 1e12));
-          if (tokenType === "usdc") {
+          if (row.tokenType === "usdc") {
             const amountUsdc = BigInt(Math.round(parseFloat(row.amount) * 1_000_000));
             if (sourcePara !== destPara) {
               txHash = await sendStealthAssetXcm(api, subSigner, 1, destPara, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta);
@@ -187,6 +201,7 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
               txHash = await sendStealthAsset(api, subSigner, 1, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta);
             }
           } else {
+            const amountBig = BigInt(Math.round(parseFloat(row.amount) * 1e12));
             txHash = await sendStealthXcm(api, subSigner, destPara, row.stealthAddress, amountBig, ephBytes, vtBytes, meta);
           }
         }
@@ -199,14 +214,17 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
     toast(`Payroll sent: ${toSend.length} transactions`, "success");
   }
 
-  const totalAmount = rows.reduce((s, r) => {
-    const n = parseFloat(r.amount);
-    return s + (isNaN(n) ? 0 : n);
-  }, 0);
+  const totalPas = rows.filter(r => r.tokenType === "pas").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const totalUsdc = rows.filter(r => r.tokenType === "usdc").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
 
   const doneCount = rows.filter(r => r.status === "done").length;
   const errorCount = rows.filter(r => r.status === "error").length;
   const computedCount = rows.filter(r => r.stealthAddress).length;
+
+  const totalDisplay = [
+    totalPas > 0 ? `${totalPas.toFixed(2)} PAS` : null,
+    totalUsdc > 0 ? `${totalUsdc.toFixed(2)} USDC` : null,
+  ].filter(Boolean).join(" + ") || "0";
 
   return (
     <div className="space-y-6">
@@ -216,21 +234,8 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
         <p className="text-zinc-400 mt-1 text-sm">Upload a CSV, preview stealth addresses, and send salary in batch</p>
       </div>
 
-      {/* Token type + controls */}
+      {/* Controls */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex rounded-lg border border-zinc-700 overflow-hidden text-xs">
-          {(["pas", "usdc"] as TokenType[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setTokenType(t)}
-              className={`px-3 py-1.5 font-medium transition-colors uppercase tracking-wider ${
-                tokenType === t ? "bg-polka-600 text-white" : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
         <button onClick={downloadExample} className="btn-secondary flex items-center gap-1.5 text-xs">
           <FileText size={12} /> Download CSV template
         </button>
@@ -262,7 +267,7 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
           <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={onFileInput} />
           <Upload size={36} className="mx-auto mb-3 text-zinc-500" />
           <p className="text-zinc-300 font-medium">Drop CSV file here or click to browse</p>
-          <p className="text-xs text-zinc-500 mt-2">Format: <span className="font-mono">name, meta_address, amount</span></p>
+          <p className="text-xs text-zinc-500 mt-2">Format: <span className="font-mono">name, meta_address, amount</span> — e.g. <span className="font-mono">100 PAS</span> or <span className="font-mono">150 USDC</span></p>
         </div>
       )}
 
@@ -271,7 +276,7 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Employees", value: rows.length, color: "text-zinc-200" },
-            { label: "Total", value: `${totalAmount.toFixed(2)} ${tokenType.toUpperCase()}`, color: "text-polka-300" },
+            { label: "Total", value: totalDisplay, color: "text-polka-300" },
             { label: "Sent", value: doneCount, color: "text-emerald-400" },
             { label: "Errors", value: errorCount, color: errorCount > 0 ? "text-red-400" : "text-zinc-500" },
           ].map(s => (
@@ -331,8 +336,11 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
                   {rows.map(row => (
                     <tr key={row.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/20 transition-colors">
                       <td className="px-4 py-2.5 text-zinc-200 font-medium">{row.name}</td>
-                      <td className="px-4 py-2.5 text-polka-300 font-mono">
-                        {row.amount} {tokenType.toUpperCase()}
+                      <td className="px-4 py-2.5 font-mono">
+                        <span className="text-polka-300">{row.amount}</span>
+                        <span className={`ml-1 text-xs font-semibold ${row.tokenType === "usdc" ? "text-blue-400" : "text-polka-400"}`}>
+                          {row.tokenType.toUpperCase()}
+                        </span>
                       </td>
                       <td className="px-4 py-2.5 font-mono text-zinc-400">
                         {row.stealthAddress

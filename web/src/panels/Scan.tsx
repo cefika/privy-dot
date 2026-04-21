@@ -13,6 +13,7 @@ import {
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
+  sendAssetFromStealth,
   withdrawFromStealth,
   sponsorGas,
   getSponsorBalance,
@@ -314,16 +315,32 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       let txHash: string;
 
       if (modal.addr.addressType === "substrate") {
-        // Pare su na Substrate strani (poslate XCM-om) — trošimo na destPara gde su para
         const api = await getApi(destPara);
-        const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
-        txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
-        const newBal = await getBalance(api, modal.addr.stealthAddress);
-        setFound(f => f.map(a =>
-          a.stealthAddress === modal.addr.stealthAddress
-            ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
-            : a
-        ));
+        if (modal.assetId !== "") {
+          // USDC na substrate stealth adresi — potpisujemo direktno stealth ključem
+          const amountUsdc = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+          const maxUsdc = modal.addr.usdcBalance ?? 0n;
+          if (amountUsdc > maxUsdc) {
+            toast(`Insufficient USDC — max ${(Number(maxUsdc) / 1_000_000).toFixed(2)}`, "error");
+            setModal(m => m ? { ...m, loading: false } : m);
+            return;
+          }
+          txHash = await sendAssetFromStealth(api, modal.addr.spendingPrivKey, modal.to, parseInt(modal.assetId), amountUsdc);
+          const newUsdc = await getAssetBalance(api, modal.addr.stealthAddress, 1);
+          setFound(f => f.map(a =>
+            a.stealthAddress === modal!.addr.stealthAddress ? { ...a, usdcBalance: newUsdc } : a
+          ));
+        } else {
+          // PAS na substrate stealth adresi
+          const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+          txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+          const newBal = await getBalance(api, modal.addr.stealthAddress);
+          setFound(f => f.map(a =>
+            a.stealthAddress === modal!.addr.stealthAddress
+              ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
+              : a
+          ));
+        }
       } else {
         // Pare su na EVM strani — standardni EVM send
         const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
@@ -332,7 +349,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         await tx.wait();
         const raw = await provider.getBalance(modal.addr.stealthAddress);
         setFound(f => f.map(a =>
-          a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
+          a.stealthAddress === modal!.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
         ));
       }
 
@@ -571,7 +588,19 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 </div>
 
                 {/* Amount */}
-                {(!isXcm || !modal.useWithdraw) && modal.assetId === "" ? (
+                {modal.assetId !== "" ? (
+                  /* USDC — required u EVM modu, optional u XCM modu */
+                  <div>
+                    <label className="label">3. Iznos (USDC){isXcm && <span className="text-zinc-500 font-normal"> — prazno = ceo balans</span>}</label>
+                    <input
+                      type="number"
+                      value={modal.amount}
+                      onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
+                      className="input"
+                      placeholder={`max: ${(Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2)}`}
+                    />
+                  </div>
+                ) : (!isXcm || !modal.useWithdraw) ? (
                   /* Direct PAS — required */
                   <div>
                     <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
@@ -583,19 +612,19 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       placeholder="0.0"
                     />
                   </div>
-                ) : isXcm ? (
-                  /* Pallet PAS or Pallet USDC — optional (empty = ceo balans) */
+                ) : (
+                  /* Pallet PAS — optional (empty = ceo balans) */
                   <div>
-                    <label className="label">{modal.assetId === "" ? "4." : "3."} Iznos ({modal.assetId !== "" ? "USDC" : "PAS"}) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <label className="label">4. Iznos (PAS) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
                     <input
                       type="number"
                       value={modal.amount}
                       onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
                       className="input"
-                      placeholder={`max: ${modal.assetId !== "" ? (Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2) : modal.addr.balance}`}
+                      placeholder={`max: ${modal.addr.balance}`}
                     />
                   </div>
-                ) : null}
+                )}
 
                 <div className="flex gap-2 mt-2">
                   <button
