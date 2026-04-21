@@ -156,23 +156,69 @@ function decodeBytes(val: unknown): Uint8Array {
   return new Uint8Array();
 }
 
-export async function fetchAnnouncements(api: ApiPromise): Promise<AnnouncementRow[]> {
-  const entries = await api.query.stealthAddresses.announcements.entries();
+// ── Nonce persistence ─────────────────────────────────────────────────────────
+
+const LAST_NONCE_KEY = (addr: string) => `privy-last-nonce-${addr.toLowerCase()}`;
+
+export function loadLastNonce(addr: string): number {
+  return parseInt(localStorage.getItem(LAST_NONCE_KEY(addr)) ?? "0", 10);
+}
+
+export function saveLastNonce(addr: string, nonce: number) {
+  localStorage.setItem(LAST_NONCE_KEY(addr), String(nonce));
+}
+
+// ── Announcement fetching ─────────────────────────────────────────────────────
+
+function parseAnnouncement(nonce: number, rawVal: unknown): AnnouncementRow | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const codec = rawVal as any;
+  if (!codec || codec.isNone) return null;
+  const ann = codec.isSome ? codec.unwrap() : codec;
+  const json = ann.toJSON?.() ?? ann;
+  return {
+    nonce,
+    ephemeralPubkey: decodeBytes(json.ephemeralPubkey ?? json.ephemeral_pubkey),
+    viewTag: decodeBytes(json.viewTag ?? json.view_tag),
+    stealthAddress: u8aToHex(decodeBytes(json.stealthAddress ?? json.stealth_address)),
+    metadata: decodeBytes(json.metadata),
+  };
+}
+
+/** Vraća trenutni nonce sa lanca (= ukupan broj announcement-a dosad). */
+export async function fetchAnnouncementNonce(api: ApiPromise): Promise<number> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const val = await (api.query.stealthAddresses as any).announcementNonce();
+  return val.toNumber();
+}
+
+/**
+ * Fetchuje samo announcement-e sa nonce >= fromNonce.
+ * Koristi multi() umesto entries() — ne skida celu storage mapu.
+ * Vraća i nextNonce kako bi caller mogao da ga sačuva.
+ */
+export async function fetchAnnouncementsSince(
+  api: ApiPromise,
+  fromNonce: number,
+): Promise<{ rows: AnnouncementRow[]; nextNonce: number }> {
+  const nextNonce = await fetchAnnouncementNonce(api);
+  if (fromNonce >= nextNonce) return { rows: [], nextNonce };
+
+  const nonces = Array.from({ length: nextNonce - fromNonce }, (_, i) => fromNonce + i);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawVals = await (api.query.stealthAddresses as any).announcements.multi(nonces);
+
   const rows: AnnouncementRow[] = [];
-  for (const [key, rawVal] of entries) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const codec = rawVal as any;
-    if (codec.isNone) continue;
-    const ann = codec.isSome ? codec.unwrap() : codec;
-    const json = ann.toJSON?.() ?? ann;
-    rows.push({
-      nonce: (key.args[0] as unknown as { toNumber(): number }).toNumber(),
-      ephemeralPubkey: decodeBytes(json.ephemeralPubkey ?? json.ephemeral_pubkey),
-      viewTag: decodeBytes(json.viewTag ?? json.view_tag),
-      stealthAddress: u8aToHex(decodeBytes(json.stealthAddress ?? json.stealth_address)),
-      metadata: decodeBytes(json.metadata),
-    });
+  for (let i = 0; i < nonces.length; i++) {
+    const row = parseAnnouncement(nonces[i], rawVals[i]);
+    if (row) rows.push(row);
   }
+  return { rows, nextNonce };
+}
+
+/** Compat: fetchuje SVE announcement-e (koristi se samo ako nema sačuvanog nonce-a). */
+export async function fetchAnnouncements(api: ApiPromise): Promise<AnnouncementRow[]> {
+  const { rows } = await fetchAnnouncementsSince(api, 0);
   return rows;
 }
 
