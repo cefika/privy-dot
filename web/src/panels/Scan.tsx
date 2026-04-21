@@ -13,6 +13,7 @@ import {
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
+  sendAssetFromStealth,
   withdrawFromStealth,
   sponsorGas,
   getSponsorBalance,
@@ -28,6 +29,7 @@ interface Props {
   sourcePara: number;
   destPara: number;
   subSigner: SubstrateSigner | null;
+  connectedAddress: string;
   found: FoundAddress[];
   setFound: React.Dispatch<React.SetStateAction<FoundAddress[]>>;
   toast: (msg: string, type?: "success" | "error") => void;
@@ -43,9 +45,8 @@ interface SpendModal {
   assetId: string;        // asset ID for pallet-assets withdrawal (empty = native)
 }
 
-export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, found, setFound, toast }: Props) {
+export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner, connectedAddress, found, setFound, toast }: Props) {
   const [scanning, setScanning] = useState(false);
-  const [fromBlock, setFromBlock] = useState("0");
   const [progress, setProgress] = useState("");
   const [modal, setModal] = useState<SpendModal | null>(null);
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
@@ -123,13 +124,12 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       if (addr) saveLastNonce(addr, nextNonce);
       setFound(matches);
       if (matches.length > 0 && subSigner) {
-        const now = new Date().toISOString();
         mergeHistory(addr, matches.map(m => ({
-          id: m.stealthAddress + now,
+          id: m.stealthAddress,
           stealthAddress: m.stealthAddress,
           balancePas: m.balance,
           balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
-          scannedAt: now,
+          scannedAt: new Date().toISOString(),
           sourcePara,
           spendingPubKey: m.spendingPubKey,
         })));
@@ -150,8 +150,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     try {
       // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
       const api = await getApi(sourcePara);
-      const { rows: announcements } = await fetchAnnouncementsSince(api, 0);
-      setProgress(`Found ${announcements.length} announcement(s). Running WASM scan…`);
+      const fromNonce = loadLastNonce(connectedAddress);
+      const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(api, fromNonce);
+      setProgress(`Found ${announcements.length} new announcement(s). Running WASM scan…`);
 
       const Rs: string[] = [];
       const viewTags: string[] = [];
@@ -162,8 +163,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       }
 
       if (Rs.length === 0) {
+        if (connectedAddress) saveLastNonce(connectedAddress, nextNonce);
         setFound([]); setProgress("");
-        toast("No announcements found");
+        toast("No new announcements since last scan");
         setScanning(false);
         return;
       }
@@ -209,7 +211,19 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         }
       }
 
+      if (connectedAddress) saveLastNonce(connectedAddress, nextNonce);
       setFound(matches);
+      if (matches.length > 0 && connectedAddress) {
+        mergeHistory(connectedAddress, matches.map(m => ({
+          id: m.stealthAddress,
+          stealthAddress: m.stealthAddress,
+          balancePas: m.balance,
+          balanceUsdc: (Number(m.usdcBalance ?? 0n) / 1_000_000).toFixed(2),
+          scannedAt: new Date().toISOString(),
+          sourcePara,
+          spendingPubKey: m.spendingPubKey,
+        })));
+      }
       setProgress("");
       toast(`Scan complete — found ${matches.length} address(es)`, matches.length > 0 ? "success" : undefined);
     } catch (e: unknown) {
@@ -301,16 +315,32 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       let txHash: string;
 
       if (modal.addr.addressType === "substrate") {
-        // Pare su na Substrate strani (poslate XCM-om) — trošimo na destPara gde su para
         const api = await getApi(destPara);
-        const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
-        txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
-        const newBal = await getBalance(api, modal.addr.stealthAddress);
-        setFound(f => f.map(a =>
-          a.stealthAddress === modal.addr.stealthAddress
-            ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
-            : a
-        ));
+        if (modal.assetId !== "") {
+          // USDC na substrate stealth adresi — potpisujemo direktno stealth ključem
+          const amountUsdc = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
+          const maxUsdc = modal.addr.usdcBalance ?? 0n;
+          if (amountUsdc > maxUsdc) {
+            toast(`Insufficient USDC — max ${(Number(maxUsdc) / 1_000_000).toFixed(2)}`, "error");
+            setModal(m => m ? { ...m, loading: false } : m);
+            return;
+          }
+          txHash = await sendAssetFromStealth(api, modal.addr.spendingPrivKey, modal.to, parseInt(modal.assetId), amountUsdc);
+          const newUsdc = await getAssetBalance(api, modal.addr.stealthAddress, 1);
+          setFound(f => f.map(a =>
+            a.stealthAddress === modal!.addr.stealthAddress ? { ...a, usdcBalance: newUsdc } : a
+          ));
+        } else {
+          // PAS na substrate stealth adresi
+          const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+          txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+          const newBal = await getBalance(api, modal.addr.stealthAddress);
+          setFound(f => f.map(a =>
+            a.stealthAddress === modal!.addr.stealthAddress
+              ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
+              : a
+          ));
+        }
       } else {
         // Pare su na EVM strani — standardni EVM send
         const spendSigner = signerFromPrivKey(modal.addr.spendingPrivKey);
@@ -319,7 +349,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         await tx.wait();
         const raw = await provider.getBalance(modal.addr.stealthAddress);
         setFound(f => f.map(a =>
-          a.stealthAddress === modal.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
+          a.stealthAddress === modal!.addr.stealthAddress ? { ...a, balance: ethers.formatEther(raw) } : a
         ));
       }
 
@@ -361,34 +391,30 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
       <div className="card">
         <div className="flex gap-3 items-end">
-          {!isXcm && (
-            <div className="flex-1">
-              <label className="label">Scan from block</label>
-              <input value={fromBlock} onChange={e => setFromBlock(e.target.value)} className="input" placeholder="0" />
-            </div>
-          )}
-          {isXcm && (
-            <div className="flex-1 space-y-1">
+          <div className="flex-1 space-y-1">
+            {isXcm ? (
               <p className="text-xs text-zinc-400">
                 Announcements: <span className="font-mono text-zinc-300">Para {sourcePara}</span>
                 {" "}→ Balances: <span className="font-mono text-zinc-300">Para {destPara}</span>
               </p>
-              {subSigner && (() => {
-                const n = loadLastNonce(signerAddress(subSigner));
-                return n > 0 ? (
-                  <p className="text-xs text-zinc-500">
-                    Scanning from announcement #{n} ·{" "}
-                    <button
-                      className="text-violet-400 hover:text-violet-300 underline"
-                      onClick={() => { saveLastNonce(signerAddress(subSigner!), 0); toast("Reset — next scan will check all announcements"); }}
-                    >
-                      Rescan from beginning
-                    </button>
-                  </p>
-                ) : null;
-              })()}
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-zinc-400">Scan announcements on Para {sourcePara}</p>
+            )}
+            {connectedAddress && (() => {
+              const n = loadLastNonce(connectedAddress);
+              return n > 0 ? (
+                <p className="text-xs text-zinc-500">
+                  Scanning from announcement #{n} ·{" "}
+                  <button
+                    className="text-violet-400 hover:text-violet-300 underline"
+                    onClick={() => { saveLastNonce(connectedAddress, 0); toast("Reset — next scan will check all announcements"); }}
+                  >
+                    Rescan from beginning
+                  </button>
+                </p>
+              ) : null;
+            })()}
+          </div>
           <button
             onClick={handleScan}
             disabled={scanning || !canScan}
@@ -562,7 +588,19 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 </div>
 
                 {/* Amount */}
-                {(!isXcm || !modal.useWithdraw) && modal.assetId === "" ? (
+                {modal.assetId !== "" ? (
+                  /* USDC — required u EVM modu, optional u XCM modu */
+                  <div>
+                    <label className="label">3. Iznos (USDC){isXcm && <span className="text-zinc-500 font-normal"> — prazno = ceo balans</span>}</label>
+                    <input
+                      type="number"
+                      value={modal.amount}
+                      onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
+                      className="input"
+                      placeholder={`max: ${(Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2)}`}
+                    />
+                  </div>
+                ) : (!isXcm || !modal.useWithdraw) ? (
                   /* Direct PAS — required */
                   <div>
                     <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
@@ -574,19 +612,19 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       placeholder="0.0"
                     />
                   </div>
-                ) : isXcm ? (
-                  /* Pallet PAS or Pallet USDC — optional (empty = ceo balans) */
+                ) : (
+                  /* Pallet PAS — optional (empty = ceo balans) */
                   <div>
-                    <label className="label">{modal.assetId === "" ? "4." : "3."} Iznos ({modal.assetId !== "" ? "USDC" : "PAS"}) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <label className="label">4. Iznos (PAS) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
                     <input
                       type="number"
                       value={modal.amount}
                       onChange={e => setModal(m => m ? { ...m, amount: e.target.value } : m)}
                       className="input"
-                      placeholder={`max: ${modal.assetId !== "" ? (Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2) : modal.addr.balance}`}
+                      placeholder={`max: ${modal.addr.balance}`}
                     />
                   </div>
-                ) : null}
+                )}
 
                 <div className="flex gap-2 mt-2">
                   <button

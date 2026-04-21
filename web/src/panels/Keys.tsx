@@ -10,6 +10,7 @@ interface Props {
   onKeysChange: (k: KeyPairs) => void;
   toast: (msg: string, type?: "success" | "error") => void;
   onRegisterEvm?: () => Promise<void>;
+  onRegisterSubstrate?: () => Promise<void>;
 }
 
 function short(s: string) { return s.slice(0, 18) + "…" + s.slice(-6); }
@@ -115,18 +116,25 @@ function KeyField({ label, value, secret }: { label: string; value: string; secr
   );
 }
 
-export default function KeysPanel({ keys, address, onKeysChange, toast, onRegisterEvm }: Props) {
+export default function KeysPanel({ keys, address, onKeysChange, toast, onRegisterEvm, onRegisterSubstrate }: Props) {
   const [importMode, setImportMode] = useState(false);
   const [importK, setImportK] = useState("");
   const [importV, setImportV] = useState("");
   const [loading, setLoading] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [registeringSubstrate, setRegisteringSubstrate] = useState(false);
   const [showQr, setShowQr] = useState(false);
 
   async function handleRegister() {
     if (!onRegisterEvm) return;
     setRegistering(true);
     try { await onRegisterEvm(); } finally { setRegistering(false); }
+  }
+
+  async function handleRegisterSubstrate() {
+    if (!onRegisterSubstrate) return;
+    setRegisteringSubstrate(true);
+    try { await onRegisterSubstrate(); } finally { setRegisteringSubstrate(false); }
   }
 
   async function generate() {
@@ -215,6 +223,16 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
                 >
                   <Link size={14} />
                   {registering ? "Registering…" : "Register on-chain (EVM)"}
+                </button>
+              )}
+              {onRegisterSubstrate && (
+                <button
+                  onClick={handleRegisterSubstrate}
+                  disabled={registeringSubstrate}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-emerald-700 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-950/50 transition-all disabled:opacity-50"
+                >
+                  <Link size={14} />
+                  {registeringSubstrate ? "Registering…" : "Register on-chain"}
                 </button>
               )}
             </div>

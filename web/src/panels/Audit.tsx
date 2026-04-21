@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Loader, CheckCircle, Download, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Search, Loader, CheckCircle, Download, Eye, EyeOff, AlertCircle, X } from "lucide-react";
 import { wasmApi } from "../wasm";
 import { getApi, fetchAnnouncements, getBalance, getAssetBalance, deriveSubstrateStealthAddress, bytes64ToR } from "../substrate";
 
@@ -27,6 +27,7 @@ export default function AuditPanel({ sourcePara, destPara, toast }: Props) {
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState<AuditRow[] | null>(null);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
+  const [addressFilter, setAddressFilter] = useState("");
 
   async function runAudit() {
     if (!spendingPubKey.trim() || !viewingKey.trim() || !viewingPubKey.trim()) {
@@ -99,6 +100,9 @@ export default function AuditPanel({ sourcePara, destPara, toast }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  const filtered = results?.filter(r =>
+    addressFilter.trim() === "" || r.stealthAddress.toLowerCase().includes(addressFilter.trim().toLowerCase())
+  ) ?? [];
   const totalPas = results?.reduce((s, r) => s + r.balancePas, 0n) ?? 0n;
   const totalUsdc = results?.reduce((s, r) => s + r.balanceUsdc, 0n) ?? 0n;
 
@@ -207,36 +211,58 @@ export default function AuditPanel({ sourcePara, destPara, toast }: Props) {
               <p>No payments found for this viewing key</p>
             </div>
           ) : (
-            <div className="card p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500 text-left">
-                      <th className="px-4 py-2 font-medium">#</th>
-                      <th className="px-4 py-2 font-medium">Stealth Address</th>
-                      <th className="px-4 py-2 font-medium">Balance PAS</th>
-                      <th className="px-4 py-2 font-medium">Balance USDC</th>
-                      <th className="px-4 py-2 font-medium">View Tag</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((r, i) => (
-                      <tr key={r.index} className="border-b border-zinc-800/50 hover:bg-zinc-800/20 transition-colors">
-                        <td className="px-4 py-2.5 text-zinc-500">{i + 1}</td>
-                        <td className="px-4 py-2.5 font-mono text-zinc-300">
-                          {r.stealthAddress.slice(0, 10)}…{r.stealthAddress.slice(-6)}
-                        </td>
-                        <td className="px-4 py-2.5 text-polka-300 font-mono">
-                          {r.balancePas > 0n ? (Number(r.balancePas) / 1e12).toFixed(4) : "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-blue-300 font-mono">
-                          {r.balanceUsdc > 0n ? (Number(r.balanceUsdc) / 1_000_000).toFixed(2) : "—"}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-zinc-500">{r.viewTag}</td>
+            <div className="space-y-2">
+              {/* Filter */}
+              <div className="relative">
+                <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <input
+                  value={addressFilter}
+                  onChange={e => setAddressFilter(e.target.value)}
+                  className="input-field w-full pl-8 pr-8 text-xs py-2"
+                  placeholder="Filter by stealth address…"
+                />
+                {addressFilter && (
+                  <button onClick={() => setAddressFilter("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              <div className="card p-0 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500 text-left">
+                        <th className="px-4 py-2 font-medium">#</th>
+                        <th className="px-4 py-2 font-medium">Stealth Address</th>
+                        <th className="px-4 py-2 font-medium">Balance PAS</th>
+                        <th className="px-4 py-2 font-medium">Balance USDC</th>
+                        <th className="px-4 py-2 font-medium">View Tag</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {filtered.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-6 text-center text-zinc-600">No results match the filter</td>
+                        </tr>
+                      ) : filtered.map((r, i) => (
+                        <tr key={r.index} className="border-b border-zinc-800/50 hover:bg-zinc-800/20 transition-colors">
+                          <td className="px-4 py-2.5 text-zinc-500">{i + 1}</td>
+                          <td className="px-4 py-2.5 font-mono text-zinc-300">
+                            {r.stealthAddress.slice(0, 10)}…{r.stealthAddress.slice(-6)}
+                          </td>
+                          <td className="px-4 py-2.5 text-polka-300 font-mono">
+                            {r.balancePas > 0n ? (Number(r.balancePas) / 1e12).toFixed(4) : "—"}
+                          </td>
+                          <td className="px-4 py-2.5 text-blue-300 font-mono">
+                            {r.balanceUsdc > 0n ? (Number(r.balanceUsdc) / 1_000_000).toFixed(2) : "—"}
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-zinc-500">{r.viewTag}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
