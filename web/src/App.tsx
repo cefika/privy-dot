@@ -4,6 +4,7 @@ import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, L
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, deriveStealthAddress, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncementsSince, loadLastNonce, saveLastNonce, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { encryptData, decryptData, isEncrypted } from "./crypto";
 
 import type { SubstrateSigner, InjectedAccountWithMeta } from "./substrate";
@@ -111,7 +112,11 @@ export default function App() {
   // Track which EVM address has already been registered to avoid duplicate MetaMask popups
   const registeredEvmAddress = useRef<string>("");
 
-  useEffect(() => { initWasm().then(() => setWasmReady(true)).catch(console.error); }, []);
+  useEffect(() => {
+    Promise.all([initWasm(), cryptoWaitReady()])
+      .then(() => setWasmReady(true))
+      .catch(console.error);
+  }, []);
 
   // EVM block ticker
   useEffect(() => {
@@ -382,10 +387,16 @@ export default function App() {
     setShowWalletModal(true);
     setExtensionLoading(true);
     try {
-      const accounts = await getExtensionAccounts();
+      const withTimeout = Promise.race([
+        getExtensionAccounts(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+      ]);
+      const accounts = await withTimeout;
       setExtensionAccounts(accounts);
-    } catch {
+    } catch (e: unknown) {
       setExtensionAccounts([]);
+      const msg = e instanceof Error ? e.message : "";
+      if (msg !== "timeout") addToast(msg || "No extension found", "error");
     } finally {
       setExtensionLoading(false);
     }

@@ -17,7 +17,7 @@ export async function initWasm(): Promise<void> {
   if (promise) return promise;
   promise = (async () => {
     const go = new window.Go();
-    const res = await fetch("/privy-core.wasm");
+    const res = await fetch("https://cefika.github.io/privy-dot/privy-core.wasm");
     const buf = await res.arrayBuffer();
     const { instance } = await WebAssembly.instantiate(buf, go.importObject);
     go.run(instance);
