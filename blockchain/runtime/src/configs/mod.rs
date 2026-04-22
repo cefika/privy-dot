@@ -321,6 +321,25 @@ impl pallet_assets::Config for Runtime {
 	type BenchmarkHelper = ();
 }
 
+// ── pallet-multisig (M-of-N threshold transactions) ──────────────────
+
+parameter_types! {
+	pub const DepositBase: Balance = 100 * EXISTENTIAL_DEPOSIT;
+	pub const DepositFactor: Balance = 10 * EXISTENTIAL_DEPOSIT;
+	pub const MaxSignatories: u32 = 20;
+}
+
+impl pallet_multisig::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type Currency = Balances;
+	type DepositBase = DepositBase;
+	type DepositFactor = DepositFactor;
+	type MaxSignatories = MaxSignatories;
+	type BlockNumberProvider = System;
+	type WeightInfo = pallet_multisig::weights::SubstrateWeight<Runtime>;
+}
+
 // ── pallet-utility (batch calls) ──────────────────────────────────────
 
 impl pallet_utility::Config for Runtime {

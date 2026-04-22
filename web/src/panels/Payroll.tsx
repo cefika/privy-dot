@@ -1,14 +1,15 @@
 import { useState, useRef } from "react";
 import {
   Upload, Play, CheckCircle, XCircle, Loader, FileText,
-  Download, ChevronDown, ChevronUp, Trash2
+  Download, ChevronDown, ChevronUp, Trash2, Layers
 } from "lucide-react";
 import { wasmApi } from "../wasm";
 import { ethers } from "ethers";
 import { sendAndAnnounceViaPrecompile } from "../chain";
 import {
-  getApi, sendStealthXcm, sendStealthAsset, sendStealthAssetXcm,
+  getApi, sendStealthAsset,
   deriveSubstrateStealthAddress, rToBytes64,
+  mkStealthXcmCall, mkStealthAssetXcmCall, mkStealthAssetCalls, submitBatchAll,
 } from "../substrate";
 import type { SubstrateSigner } from "../substrate";
 
@@ -175,43 +176,99 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
     const currentRows = await computeAll();
 
     const toSend = currentRows.filter(r => r.status === "pending" && r.stealthAddress);
-    for (const row of toSend) {
-      updateRow(row.id, { status: "sending" });
-      try {
-        let txHash = "";
-        if (!isXcm && signer && row.stealthAddress && row.ephemeralKey && row.viewTag) {
-          const ephBytes = rToBytes64(row.ephemeralKey);
-          const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
-          const vtBytes = new Uint8Array([vtByte, 0x00]);
-          const stealthBytes = new Uint8Array(32);
-          const stealthHex = row.stealthAddress.startsWith("0x") ? row.stealthAddress.slice(2) : row.stealthAddress;
-          for (let i = 0; i < 32; i++) stealthBytes[i] = parseInt(stealthHex.slice(i * 2, i * 2 + 2), 16);
-          txHash = await sendAndAnnounceViaPrecompile(signer, stealthBytes, row.amount, ephBytes, vtBytes);
-        } else if (isXcm && subSigner && row.stealthAddress && row.ephemeralKey && row.viewTag) {
-          const api = await getApi(sourcePara);
+    if (toSend.length === 0) {
+      setRunning(false);
+      toast("Nothing to send", "info");
+      return;
+    }
+
+    try {
+      if (isXcm && subSigner) {
+        // ── Batch mode: build all calls, submit in one tx ────────────────────
+        const api = await getApi(sourcePara);
+        const calls: ReturnType<typeof mkStealthXcmCall>[] = [];
+        const validRows: typeof toSend = [];
+
+        for (const row of toSend) {
+          if (!row.stealthAddress || !row.ephemeralKey || !row.viewTag) continue;
+          updateRow(row.id, { status: "sending" });
           const ephBytes = rToBytes64(row.ephemeralKey);
           const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
           const vtBytes = new Uint8Array([vtByte, 0x00]);
           const meta = new Uint8Array(32);
+
           if (row.tokenType === "usdc") {
             const amountUsdc = BigInt(Math.round(parseFloat(row.amount) * 1_000_000));
             if (sourcePara !== destPara) {
-              txHash = await sendStealthAssetXcm(api, subSigner, 1, destPara, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta);
+              calls.push(mkStealthAssetXcmCall(api, 1, destPara, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta));
             } else {
-              txHash = await sendStealthAsset(api, subSigner, 1, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta);
+              // same-chain: assets.transfer + announce (2 calls per row)
+              calls.push(...mkStealthAssetCalls(api, 1, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta));
             }
           } else {
             const amountBig = BigInt(Math.round(parseFloat(row.amount) * 1e12));
-            txHash = await sendStealthXcm(api, subSigner, destPara, row.stealthAddress, amountBig, ephBytes, vtBytes, meta);
+            calls.push(mkStealthXcmCall(api, destPara, row.stealthAddress, amountBig, ephBytes, vtBytes, meta));
+          }
+          validRows.push(row);
+        }
+
+        const txHash = await submitBatchAll(api, subSigner, calls);
+        for (const row of validRows) {
+          updateRow(row.id, { status: "done", txHash });
+        }
+        toast(`Payroll sent: ${validRows.length} employees in 1 batch tx`, "success");
+
+      } else if (!isXcm && signer) {
+        // ── EVM mode: sequential (no batchAll on EVM side) ───────────────────
+        let sent = 0;
+        for (const row of toSend) {
+          if (!row.stealthAddress || !row.ephemeralKey || !row.viewTag) continue;
+          updateRow(row.id, { status: "sending" });
+          try {
+            const ephBytes = rToBytes64(row.ephemeralKey);
+            const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
+            const vtBytes = new Uint8Array([vtByte, 0x00]);
+            const stealthHex = row.stealthAddress.startsWith("0x") ? row.stealthAddress.slice(2) : row.stealthAddress;
+            const stealthBytes = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) stealthBytes[i] = parseInt(stealthHex.slice(i * 2, i * 2 + 2), 16);
+            const txHash = await sendAndAnnounceViaPrecompile(signer, stealthBytes, row.amount, ephBytes, vtBytes);
+            updateRow(row.id, { status: "done", txHash });
+            sent++;
+          } catch (e: unknown) {
+            updateRow(row.id, { status: "error", error: e instanceof Error ? e.message : "Send failed" });
           }
         }
-        updateRow(row.id, { status: "done", txHash });
-      } catch (e: unknown) {
-        updateRow(row.id, { status: "error", error: e instanceof Error ? e.message : "Send failed" });
+        toast(`Payroll sent: ${sent} transactions`, "success");
+      } else if (isXcm && !subSigner && subSigner === null) {
+        // same-chain USDC fallback (no XCM)
+        const api = await getApi(sourcePara);
+        let sent = 0;
+        for (const row of toSend) {
+          if (!row.stealthAddress || !row.ephemeralKey || !row.viewTag) continue;
+          updateRow(row.id, { status: "sending" });
+          try {
+            const ephBytes = rToBytes64(row.ephemeralKey);
+            const vtByte = parseInt(row.viewTag.replace(/^0x/, ""), 16);
+            const vtBytes = new Uint8Array([vtByte, 0x00]);
+            const meta = new Uint8Array(32);
+            const amountUsdc = BigInt(Math.round(parseFloat(row.amount) * 1_000_000));
+            const txHash = await sendStealthAsset(api, subSigner!, 1, row.stealthAddress, amountUsdc, ephBytes, vtBytes, meta);
+            updateRow(row.id, { status: "done", txHash });
+            sent++;
+          } catch (e: unknown) {
+            updateRow(row.id, { status: "error", error: e instanceof Error ? e.message : "Send failed" });
+          }
+        }
+        toast(`Payroll sent: ${sent} transactions`, "success");
+      }
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "Batch send failed", "error");
+      for (const row of toSend) {
+        updateRow(row.id, { status: "error", error: e instanceof Error ? e.message : "Batch failed" });
       }
     }
+
     setRunning(false);
-    toast(`Payroll sent: ${toSend.length} transactions`, "success");
   }
 
   const totalPas = rows.filter(r => r.tokenType === "pas").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
@@ -304,8 +361,10 @@ export default function PayrollPanel({ mode, signer, subSigner, sourcePara, dest
             disabled={running || rows.every(r => r.status === "done")}
             className="btn-primary flex items-center gap-2 text-sm disabled:opacity-40"
           >
-            {running ? <Loader size={14} className="animate-spin" /> : <Play size={14} />}
-            {running ? "Sending…" : "Send Payroll"}
+            {running
+              ? <Loader size={14} className="animate-spin" />
+              : isXcm ? <Layers size={14} /> : <Play size={14} />}
+            {running ? "Sending…" : isXcm ? "Send Payroll (batch)" : "Send Payroll"}
           </button>
         </div>
       )}

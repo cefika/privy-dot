@@ -13,6 +13,7 @@ import {
   deriveSubstrateStealthAddress,
   bytes64ToR,
   spendFromStealth,
+  spendAllFromStealth,
   sendAssetFromStealth,
   withdrawFromStealth,
   sponsorGas,
@@ -330,8 +331,32 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           setFound(f => f.map(a =>
             a.stealthAddress === modal!.addr.stealthAddress ? { ...a, usdcBalance: newUsdc } : a
           ));
+        } else if (modal.useWithdraw) {
+          // Pallet Withdraw — iznos opcionalan (prazno = ceo balans)
+          if (subSigner) {
+            // Ima Substrate signer → koristi pallet extrinsic (sponsor plaća fee)
+            let withdrawAmount: bigint | undefined;
+            if (modal.amount.trim() !== "") {
+              withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+            }
+            txHash = await withdrawFromStealth(api, modal.addr.stealthAddress, modal.addr.spendingPrivKey, modal.to, subSigner, undefined, withdrawAmount);
+          } else {
+            // Nema Substrate signer → direktno transferAll (stealth ključ sam plaća fee)
+            if (modal.amount.trim() !== "") {
+              const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
+              txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
+            } else {
+              txHash = await spendAllFromStealth(api, modal.addr.spendingPrivKey, modal.to);
+            }
+          }
+          const newBal = await getBalance(api, modal.addr.stealthAddress);
+          setFound(f => f.map(a =>
+            a.stealthAddress === modal!.addr.stealthAddress
+              ? { ...a, balance: (Number(newBal) / 1e12).toFixed(4), balancePlanck: newBal }
+              : a
+          ));
         } else {
-          // PAS na substrate stealth adresi
+          // Direktno — iznos obavezan
           const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
           txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
           const newBal = await getBalance(api, modal.addr.stealthAddress);
@@ -600,7 +625,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       placeholder={`max: ${(Number(modal.addr.usdcBalance ?? 0n) / 1_000_000).toFixed(2)}`}
                     />
                   </div>
-                ) : (!isXcm || !modal.useWithdraw) ? (
+                ) : (!modal.useWithdraw) ? (
                   /* Direct PAS — required */
                   <div>
                     <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
@@ -613,9 +638,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                     />
                   </div>
                 ) : (
-                  /* Pallet PAS — optional (empty = ceo balans) */
+                  /* Pallet Withdraw PAS — optional (empty = ceo balans) */
                   <div>
-                    <label className="label">4. Iznos (PAS) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <label className="label">{isXcm ? "4." : "3."} Iznos (PAS) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
                     <input
                       type="number"
                       value={modal.amount}
@@ -629,7 +654,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 <div className="flex gap-2 mt-2">
                   <button
                     onClick={handleSpend}
-                    disabled={modal.loading || !modal.to || ((!isXcm || (!modal.useWithdraw && modal.assetId === "")) && !modal.amount)}
+                    disabled={modal.loading || !modal.to || ((!modal.useWithdraw && modal.assetId === "") && !modal.amount)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2"
                   >
                     {modal.loading ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
