@@ -245,13 +245,13 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       if (modal.useWithdraw) {
         if (!subSigner) throw new Error("Connect a dev account in the sidebar to use Withdraw via Pallet");
 
-        // Ensure sponsor has enough in the gas pool (WithdrawalFee = 0.01 DOT, MinDeposit = 1 DOT)
+        // Ensure sponsor has enough in the gas pool (WithdrawalFee = 0.01 PAS, MinDeposit = 1 PAS)
         const WITHDRAWAL_FEE = 10_000_000_000n;
-        const MIN_DEPOSIT = 1_000_000_000_000n; // 1 DOT minimum
+        const MIN_DEPOSIT = 1_000_000_000_000n; // 1 PAS minimum
         const poolBal = await getSponsorBalance(api, signerAddress(subSigner));
         if (poolBal < WITHDRAWAL_FEE) {
           setModal(m => m ? { ...m, loading: true } : m);
-          toast("Depositing sponsor gas (1 DOT)…");
+          toast("Depositing sponsor gas…");
           await sponsorGas(api, subSigner, MIN_DEPOSIT);
         }
 
@@ -475,7 +475,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                           : "Stealth EVM adresa"}
                     </span>
                   </div>
-                  <p className="font-mono text-sm text-zinc-100 break-all">{addr.stealthAddress}</p>
+                  <p className="font-mono text-sm text-zinc-100">
+                    {addr.stealthAddress.slice(0, 10)}…{addr.stealthAddress.slice(-8)}
+                  </p>
                   <p className="text-2xl font-bold text-emerald-400 mt-2">
                     {addr.balance}
                     <span className="text-base font-medium text-zinc-400 ml-2">
@@ -532,7 +534,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
             <h3 className="text-lg font-semibold text-zinc-100 mb-1">
               Spend from Stealth Address
             </h3>
-            <p className="text-xs text-zinc-500 font-mono mb-4">{modal.addr.stealthAddress}</p>
+            <p className="text-xs text-zinc-500 font-mono mb-4">
+              {modal.addr.stealthAddress.slice(0, 10)}…{modal.addr.stealthAddress.slice(-8)}
+            </p>
             <div className="mb-4 space-y-1">
               <p className="text-sm text-zinc-400">
                 Available: <span className="text-emerald-400 font-semibold">{modal.addr.balance} PAS</span>
