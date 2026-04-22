@@ -1,6 +1,6 @@
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
-import { blake2AsU8a, decodeAddress } from "@polkadot/util-crypto";
+import { blake2AsU8a, decodeAddress, createKeyMulti, sortAddresses, encodeAddress } from "@polkadot/util-crypto";
 import { u8aToHex, hexToU8a } from "@polkadot/util";
 import { web3Enable, web3Accounts, web3FromAddress } from "@polkadot/extension-dapp";
 import type { KeyringPair } from "@polkadot/keyring/types";
@@ -336,6 +336,176 @@ export async function sendStealthAssetXcm(
   );
 }
 
+// ── Batch payroll helpers ─────────────────────────────────────────────────────
+// Call builders — vraćaju call objekat bez slanja, za upotrebu u utility.batchAll
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Call = any;
+
+export function mkStealthXcmCall(api: ApiPromise, destParaId: number, stealthAddress: string, amount: bigint, ephPub: Uint8Array, viewTag: Uint8Array, meta: Uint8Array): Call {
+  return api.tx.stealthAddresses.sendStealthXcm(destParaId, stealthAddress, amount.toString(), Array.from(ephPub), Array.from(viewTag), Array.from(meta));
+}
+
+export function mkStealthAssetXcmCall(api: ApiPromise, assetId: number, destParaId: number, stealthAddress: string, amount: bigint, ephPub: Uint8Array, viewTag: Uint8Array, meta: Uint8Array): Call {
+  return api.tx.stealthAddresses.sendStealthAssetXcm(assetId, destParaId, stealthAddress, amount.toString(), Array.from(ephPub), Array.from(viewTag), Array.from(meta));
+}
+
+export function mkStealthAssetCalls(api: ApiPromise, assetId: number, stealthAddress: string, amount: bigint, ephPub: Uint8Array, viewTag: Uint8Array, meta: Uint8Array): Call[] {
+  return [
+    api.tx.assets.transfer(assetId, stealthAddress, amount.toString()),
+    api.tx.stealthAddresses.announce(Array.from(ephPub), Array.from(viewTag), stealthAddress, Array.from(meta)),
+  ];
+}
+
+export async function submitBatchAll(api: ApiPromise, signer: SubstrateSigner, calls: Call[]): Promise<string> {
+  return submitTx(api.tx.utility.batchAll(calls), signer);
+}
+
+// ── Multisig helpers ──────────────────────────────────────────────────────────
+
+export interface MultisigTimepoint {
+  height: number;
+  index: number;
+}
+
+export interface MultisigOnChainInfo {
+  when: MultisigTimepoint;
+  deposit: bigint;
+  depositor: string;
+  approvals: string[];
+}
+
+const MULTISIG_MAX_WEIGHT = { refTime: 1_000_000_000, proofSize: 65536 };
+
+/** Deterministic M-of-N multisig address (SS58 prefix 42 for dev chains) */
+export function computeMultisigAddress(signatories: string[], threshold: number): string {
+  const sorted = sortAddresses([...signatories]);
+  return encodeAddress(createKeyMulti(sorted, threshold), 42);
+}
+
+export function sortSignatories(addresses: string[]): string[] {
+  return [...sortAddresses(addresses)];
+}
+
+/** Blake2-256 hash of the call method bytes — needed by approveAsMulti */
+export function getCallHash(call: Call): string {
+  return call.method.hash.toHex();
+}
+
+/** Hex of the call method bytes — stored to reconstruct the call for execution */
+export function getCallHex(call: Call): string {
+  return call.method.toHex();
+}
+
+/** Reconstruct a Call from stored hex */
+export function decodeCall(api: ApiPromise, callHex: string): Call {
+  return api.registry.createType("Call", callHex);
+}
+
+/** Query on-chain state of a pending multisig TX */
+export async function getMultisigOnChainInfo(
+  api: ApiPromise,
+  multisigAddress: string,
+  callHash: string
+): Promise<MultisigOnChainInfo | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (api.query.multisig as any).multisigs(multisigAddress, callHash);
+  if (!result || result.isNone) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const json = result.unwrap().toJSON() as any;
+  return {
+    when: { height: json.when.height, index: json.when.index },
+    deposit: BigInt(json.deposit ?? 0),
+    depositor: json.depositor ?? "",
+    approvals: json.approvals ?? [],
+  };
+}
+
+/**
+ * First signatory: initiates a multisig TX.
+ * Submits asMulti with maybeTimepoint=null, then queries chain for the stored timepoint.
+ */
+export async function submitMultisigInitiate(
+  api: ApiPromise,
+  signer: SubstrateSigner,
+  threshold: number,
+  allSignatories: string[],
+  call: Call
+): Promise<{ txHash: string; timepoint: MultisigTimepoint }> {
+  const myAddr = signerAddress(signer);
+  const others = sortAddresses(allSignatories.filter(a => a !== myAddr));
+  const multisigAddr = computeMultisigAddress(allSignatories, threshold);
+  const callHash = getCallHash(call);
+
+  const txHash = await submitTx(
+    api.tx.multisig.asMulti(threshold, others, null, call, MULTISIG_MAX_WEIGHT),
+    signer
+  );
+
+  // TX is in-block — query on-chain to get the stored timepoint
+  const info = await getMultisigOnChainInfo(api, multisigAddr, callHash);
+  const timepoint = info?.when ?? { height: 0, index: 0 };
+  return { txHash, timepoint };
+}
+
+/**
+ * Intermediate signatory: approves without dispatching.
+ * Only needs the call hash, not the full call.
+ */
+export async function submitMultisigApprove(
+  api: ApiPromise,
+  signer: SubstrateSigner,
+  threshold: number,
+  allSignatories: string[],
+  timepoint: MultisigTimepoint,
+  callHash: string
+): Promise<string> {
+  const myAddr = signerAddress(signer);
+  const others = sortAddresses(allSignatories.filter(a => a !== myAddr));
+  return submitTx(
+    api.tx.multisig.approveAsMulti(threshold, others, timepoint, callHash, MULTISIG_MAX_WEIGHT),
+    signer
+  );
+}
+
+/**
+ * Last signatory (reaches threshold): submits the full call — dispatches immediately.
+ */
+export async function submitMultisigExecute(
+  api: ApiPromise,
+  signer: SubstrateSigner,
+  threshold: number,
+  allSignatories: string[],
+  timepoint: MultisigTimepoint,
+  call: Call
+): Promise<string> {
+  const myAddr = signerAddress(signer);
+  const others = sortAddresses(allSignatories.filter(a => a !== myAddr));
+  return submitTx(
+    api.tx.multisig.asMulti(threshold, others, timepoint, call, MULTISIG_MAX_WEIGHT),
+    signer
+  );
+}
+
+/**
+ * Cancel a pending multisig TX — only the depositor (initiator) can cancel.
+ */
+export async function cancelMultisig(
+  api: ApiPromise,
+  signer: SubstrateSigner,
+  threshold: number,
+  allSignatories: string[],
+  timepoint: MultisigTimepoint,
+  callHash: string
+): Promise<string> {
+  const myAddr = signerAddress(signer);
+  const others = sortAddresses(allSignatories.filter(a => a !== myAddr));
+  return submitTx(
+    api.tx.multisig.cancelAsMulti(threshold, others, timepoint, callHash),
+    signer
+  );
+}
+
 export async function spendFromStealth(
   api: ApiPromise,
   spendingPrivKey: string,
@@ -350,6 +520,23 @@ export async function spendFromStealth(
   }
   return submitTx(
     api.tx.balances.transferAllowDeath(dest, amount.toString()),
+    { type: "keypair", pair }
+  );
+}
+
+/** Šalje SVE PAS sa stealth adrese — fee se automatski oduzima (transferAll keepAlive=false) */
+export async function spendAllFromStealth(
+  api: ApiPromise,
+  spendingPrivKey: string,
+  to: string
+): Promise<string> {
+  const pair = getStealthSpendingKeypair(spendingPrivKey);
+  let dest = to;
+  if (/^0x[0-9a-fA-F]{40}$/.test(to)) {
+    dest = to.toLowerCase().replace("0x", "0x") + "ee".repeat(12);
+  }
+  return submitTx(
+    api.tx.balances.transferAll(dest, false),
     { type: "keypair", pair }
   );
 }

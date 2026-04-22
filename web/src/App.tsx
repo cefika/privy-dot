@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, User, Landmark, Clock } from "lucide-react";
+import { Key, Send, Radar, Wallet, WifiOff, X, CheckCircle, AlertCircle, Info, Loader, Lock, Building2, User, Landmark, Clock, ShieldCheck } from "lucide-react";
 import { initWasm, wasmApi } from "./wasm";
 import { connectMetaMask, signerFromPrivKey, provider, deriveStealthAddress, registerMetaAddressViaPrecompile } from "./chain";
 import { getDevAccount, getExtensionAccounts, signerFromExtensionAccount, signerAddress, PARACHAINS, disconnectAll, getBalance, getAssetBalance, getApi, fetchAnnouncementsSince, loadLastNonce, saveLastNonce, deriveSubstrateStealthAddress, bytes64ToR, registerMetaAddress, secp256k1ToCompressed, bn254ToBytes64 } from "./substrate";
@@ -15,22 +15,25 @@ import PayrollPanel from "./panels/Payroll";
 import AuditPanel from "./panels/Audit";
 import HistoryPanel, { mergeHistory } from "./panels/History";
 import ModeSelector from "./components/ModeSelector";
+import MultisigPanel from "./panels/Multisig";
 
 type UserMode = "personal" | "business" | "government";
-type Tab = "keys" | "send" | "scan" | "payroll" | "audit" | "history";
+type Tab = "keys" | "send" | "scan" | "payroll" | "audit" | "history" | "multisig";
 type Mode = "evm" | "xcm";
 type DevAccount = "alice" | "bob" | "charlie";
 
 const PERSONAL_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "keys",    label: "My Keys", Icon: Key   },
-  { id: "send",    label: "Send",    Icon: Send  },
-  { id: "scan",    label: "Scan",    Icon: Radar },
-  { id: "history", label: "History", Icon: Clock },
+  { id: "keys",     label: "My Keys",  Icon: Key         },
+  { id: "send",     label: "Send",     Icon: Send        },
+  { id: "scan",     label: "Scan",     Icon: Radar       },
+  { id: "multisig", label: "Multisig", Icon: ShieldCheck },
+  { id: "history",  label: "History",  Icon: Clock       },
 ];
 
 const BUSINESS_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
-  { id: "payroll", label: "Payroll", Icon: Send  },
-  { id: "send",    label: "Send",    Icon: Radar },
+  { id: "payroll",  label: "Payroll",  Icon: Send        },
+  { id: "multisig", label: "Multisig", Icon: ShieldCheck },
+  { id: "send",     label: "Send",     Icon: Radar       },
 ];
 
 const GOVERNMENT_NAV: { id: Tab; label: string; Icon: React.FC<{ size?: number | string; className?: string }> }[] = [
@@ -655,12 +658,13 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 px-6 py-4 overflow-y-auto max-w-2xl">
-          {tab === "keys"    && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} onRegisterSubstrate={subSigner ? handleRegisterSubstrate : undefined} />}
-          {tab === "send"    && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "scan"    && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} connectedAddress={connectedAddress} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
-          {tab === "payroll" && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "audit"   && <AuditPanel sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
-          {tab === "history" && <HistoryPanel address={connectedAddress} />}
+          {tab === "keys"     && <KeysPanel keys={keys} address={connectedAddress} onKeysChange={onKeysChange} toast={addToast} onRegisterEvm={signer ? handleRegisterViaPrecompile : undefined} onRegisterSubstrate={subSigner ? handleRegisterSubstrate : undefined} />}
+          {tab === "send"     && <SendPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "scan"     && <ScanPanel mode={mode} keys={keys} sourcePara={sourcePara} destPara={destPara} subSigner={subSigner} connectedAddress={connectedAddress} found={foundAddresses} setFound={setFoundAddresses} toast={addToast} />}
+          {tab === "payroll"  && <PayrollPanel mode={mode} signer={signer} subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "audit"    && <AuditPanel sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
+          {tab === "history"  && <HistoryPanel address={connectedAddress} />}
+          {tab === "multisig" && <MultisigPanel subSigner={subSigner} sourcePara={sourcePara} destPara={destPara} toast={addToast} />}
         </main>
       </div>
 

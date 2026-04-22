@@ -262,6 +262,9 @@ mod runtime {
 	#[runtime::pallet_index(53)]
 	pub type Utility = pallet_utility;
 
+	#[runtime::pallet_index(54)]
+	pub type Multisig = pallet_multisig;
+
 	// Smart contracts (EVM + PVM via pallet-revive)
 	#[runtime::pallet_index(90)]
 	pub type Revive = pallet_revive;
