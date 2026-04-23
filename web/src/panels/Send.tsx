@@ -90,7 +90,7 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
     const [K, V] = parts;
     try {
       const sendResult = await wasmApi.send(K, V);
-      // I EVM i XCM šalju na AccountId32 (blake2 derivacija) — unifikovan model
+      // Both EVM and XCM send to AccountId32 (blake2 derivation) — unified model
       const stealthAddress = deriveSubstrateStealthAddress(sendResult.spendingPubKey);
       setResolved({ K, V, stealthAddress, ephemeralKey: sendResult.R, viewTag: sendResult.viewTag });
       setStep("resolved");
@@ -281,17 +281,17 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
           </div>
           {tokenType === "usdc" && sourcePara !== destPara && (
             <p className="text-xs text-zinc-500 mt-2">
-              Spaljuje USDC na Para {sourcePara}, mintuje na stealth adresu na Para {destPara} via XCM — announcement na Para {destPara}.
+              Burns USDC on Para {sourcePara}, mints to stealth address on Para {destPara} via XCM — announcement on Para {destPara}.
             </p>
           )}
           {tokenType === "usdc" && sourcePara === destPara && (
             <p className="text-xs text-zinc-500 mt-2">
-              Šalje USDC (asset ID 1) na stealth adresu na Para {destPara} i kreira announcement — primalac može da skenira.
+              Sends USDC (asset ID 1) to stealth address on Para {destPara} and creates an announcement — recipient can scan.
             </p>
           )}
           {tokenType === "pas" && (
             <p className="text-xs text-zinc-500 mt-2">
-              Teleportuje PAS sa Para {sourcePara} na stealth adresu na Para {destPara} via XCM.
+              Teleports PAS from Para {sourcePara} to stealth address on Para {destPara} via XCM.
             </p>
           )}
         </div>
@@ -368,12 +368,12 @@ export default function SendPanel({ mode, signer, subSigner, sourcePara, destPar
           </div>
           {isXcm && tokenType === "pas" && (
             <p className="text-xs text-zinc-500 mt-2">
-              1 PAS = 10¹² planck. Min preporučeno: 2 (da pokrije XCM fees).
+              1 PAS = 10¹² planck. Minimum recommended: 2 (to cover XCM fees).
             </p>
           )}
           {isXcm && tokenType === "usdc" && (
             <p className="text-xs text-zinc-500 mt-2">
-              USDC ima 6 decimala. Npr. 5 = 5.000000 USDC.
+              USDC has 6 decimals. E.g. 5 = 5.000000 USDC.
             </p>
           )}
           <button

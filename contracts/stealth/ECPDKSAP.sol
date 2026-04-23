@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-// Registry (registerMetaAddress / updateMetaAddress / resolve) je zakomentarisan u Rust kodu.
-// Kada se odkomentariše, dodati ovde:
+// Registry (registerMetaAddress / updateMetaAddress / resolve) is commented out in the Rust code.
+// When uncommented, add here:
 //   function registerMetaAddress(string calldata id, bytes calldata metaAddress) external payable;
 //   function updateMetaAddress(string calldata id, bytes calldata metaAddress) external;
 //   function resolve(string calldata id) external view returns (bytes memory);

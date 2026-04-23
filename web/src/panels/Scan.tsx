@@ -89,9 +89,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("valid JSON") || msg.includes("already exited")) {
           throw new Error(
-            "Storage sadrži matematički nevalidne ephemeral pubkey vrednosti " +
-            "(manual test unosi sa nulama). Restartuj zombienet i koristi " +
-            "frontend Send panel — on uvek generiše validne kriptografske vrednosti."
+            "Storage contains mathematically invalid ephemeral pubkey values " +
+            "(manual test entries with zeros). Restart zombienet and use " +
+            "the frontend Send panel — it always generates valid cryptographic values."
           );
         }
         throw e;
@@ -108,7 +108,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         const stealthAddress = deriveSubstrateStealthAddress(pubKey);
         const balPlanck = await getBalance(destApi, stealthAddress);
         const usdcBalance = await getAssetBalance(destApi, stealthAddress, 1);
-        if (balPlanck === 0n && usdcBalance === 0n) continue; // već potrošeno, preskoči
+        if (balPlanck === 0n && usdcBalance === 0n) continue; // already spent, skip
 
         const balFormatted = (Number(balPlanck) / 1e12).toFixed(4);
 
@@ -149,7 +149,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
     if (!keys) return;
     setScanning(true); setFound([]); setProgress("Fetching announcements from pallet…");
     try {
-      // EVM korisnici announce-uju kroz precompile → isti pallet storage kao Substrate
+      // EVM users announce via precompile → same pallet storage as Substrate
       const api = await getApi(sourcePara);
       const fromNonce = loadLastNonce(connectedAddress);
       const { rows: announcements, nextNonce } = await fetchAnnouncementsSince(api, fromNonce);
@@ -182,7 +182,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
         const pubKey = result.spendingPubKeys[i];
         if (!privKey || privKey === "0x" || !pubKey) continue;
 
-        // Provjeri EVM balans (H160 adresa — primljeno EVM sendom na Para 1000)
+        // Check EVM balance (H160 address — received via EVM send on Para 1000)
         const evmAddress = deriveStealthAddress(pubKey);
         const evmRaw = await provider.getBalance(evmAddress);
         if (evmRaw > 0n) {
@@ -195,7 +195,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
           });
         }
 
-        // Provjeri Substrate balans na DEST parachanu (XCM send ide sourcePara → destPara)
+        // Check Substrate balance on DEST parachain (XCM send goes sourcePara → destPara)
         const subAddress = deriveSubstrateStealthAddress(pubKey);
         const subBal = await getBalance(destApi, subAddress);
         const subUsdc = await getAssetBalance(destApi, subAddress, 1);
@@ -318,7 +318,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
       if (modal.addr.addressType === "substrate") {
         const api = await getApi(destPara);
         if (modal.assetId !== "") {
-          // USDC na substrate stealth adresi — potpisujemo direktno stealth ključem
+          // USDC on substrate stealth address — signed directly with the stealth key
           const amountUsdc = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000));
           const maxUsdc = modal.addr.usdcBalance ?? 0n;
           if (amountUsdc > maxUsdc) {
@@ -332,16 +332,16 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
             a.stealthAddress === modal!.addr.stealthAddress ? { ...a, usdcBalance: newUsdc } : a
           ));
         } else if (modal.useWithdraw) {
-          // Pallet Withdraw — iznos opcionalan (prazno = ceo balans)
+          // Pallet Withdraw — amount optional (empty = full balance)
           if (subSigner) {
-            // Ima Substrate signer → koristi pallet extrinsic (sponsor plaća fee)
+            // Has Substrate signer → use pallet extrinsic (sponsor pays the fee)
             let withdrawAmount: bigint | undefined;
             if (modal.amount.trim() !== "") {
               withdrawAmount = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
             }
             txHash = await withdrawFromStealth(api, modal.addr.stealthAddress, modal.addr.spendingPrivKey, modal.to, subSigner, undefined, withdrawAmount);
           } else {
-            // Nema Substrate signer → direktno transferAll (stealth ključ sam plaća fee)
+            // No Substrate signer → direct transferAll (stealth key pays its own fee)
             if (modal.amount.trim() !== "") {
               const amountPlanck = BigInt(Math.round(parseFloat(modal.amount) * 1_000_000_000_000));
               txHash = await spendFromStealth(api, modal.addr.spendingPrivKey, modal.to, amountPlanck);
@@ -471,8 +471,8 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                       {isXcm
                         ? `Stealth AccountId32 (Para ${destPara})`
                         : addr.addressType === "substrate"
-                          ? "Stealth AccountId32 (primljeno via XCM)"
-                          : "Stealth EVM adresa"}
+                          ? "Stealth AccountId32 (received via XCM)"
+                          : "Stealth EVM address"}
                     </span>
                   </div>
                   <p className="font-mono text-sm text-zinc-100">
@@ -560,7 +560,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 {/* Step 1: Token */}
                 {(isXcm || modal.addr.addressType === "substrate") && (
                   <div>
-                    <label className="label">1. Koji token šalješ?</label>
+                    <label className="label">1. Which token are you sending?</label>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setModal(m => m ? { ...m, assetId: "", useWithdraw: false } : m)}
@@ -585,21 +585,21 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 {/* Step 2: Metod — samo za PAS */}
                 {(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" && (
                   <div>
-                    <label className="label">2. Kako šalješ?</label>
+                    <label className="label">2. How are you sending?</label>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setModal(m => m ? { ...m, useWithdraw: false } : m)}
                         className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${!modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
                       >
-                        <div className="font-semibold">Direktno</div>
-                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                        <div className="font-semibold">Direct</div>
+                        <div className="text-xs text-zinc-500">choose amount</div>
                       </button>
                       <button
                         onClick={() => setModal(m => m ? { ...m, useWithdraw: true } : m)}
                         className={`flex-1 py-2.5 rounded-lg text-sm border transition-colors ${modal.useWithdraw ? "border-violet-500 bg-violet-950/50 text-violet-300" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
                       >
                         <div className="font-semibold">Pallet Withdraw</div>
-                        <div className="text-xs text-zinc-500">biraš iznos</div>
+                        <div className="text-xs text-zinc-500">choose amount</div>
                       </button>
                     </div>
                   </div>
@@ -607,7 +607,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
 
                 {/* Step 3: Destination */}
                 <div>
-                  <label className="label">{(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" ? "3." : "2."} Destination adresa</label>
+                  <label className="label">{(isXcm || modal.addr.addressType === "substrate") && modal.assetId === "" ? "3." : "2."} Destination address</label>
                   <input
                     value={modal.to}
                     onChange={e => setModal(m => m ? { ...m, to: e.target.value } : m)}
@@ -620,7 +620,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 {modal.assetId !== "" ? (
                   /* USDC — required u EVM modu, optional u XCM modu */
                   <div>
-                    <label className="label">3. Iznos (USDC){isXcm && <span className="text-zinc-500 font-normal"> — prazno = ceo balans</span>}</label>
+                    <label className="label">3. Amount (USDC){isXcm && <span className="text-zinc-500 font-normal"> — leave empty for full balance</span>}</label>
                     <input
                       type="number"
                       value={modal.amount}
@@ -632,7 +632,7 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                 ) : (!modal.useWithdraw) ? (
                   /* Direct PAS — required */
                   <div>
-                    <label className="label">{isXcm ? "4." : "3."} Iznos (PAS)</label>
+                    <label className="label">{isXcm ? "4." : "3."} Amount (PAS)</label>
                     <input
                       type="number"
                       value={modal.amount}
@@ -642,9 +642,9 @@ export default function ScanPanel({ mode, keys, sourcePara, destPara, subSigner,
                     />
                   </div>
                 ) : (
-                  /* Pallet Withdraw PAS — optional (empty = ceo balans) */
+                  /* Pallet Withdraw PAS — optional (empty = full balance) */
                   <div>
-                    <label className="label">{isXcm ? "4." : "3."} Iznos (PAS) <span className="text-zinc-500 font-normal">— prazno = ceo balans</span></label>
+                    <label className="label">{isXcm ? "4." : "3."} Amount (PAS) <span className="text-zinc-500 font-normal">— leave empty for full balance</span></label>
                     <input
                       type="number"
                       value={modal.amount}

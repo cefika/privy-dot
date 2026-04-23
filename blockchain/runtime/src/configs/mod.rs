@@ -349,18 +349,18 @@ impl pallet_utility::Config for Runtime {
 	type WeightInfo = pallet_utility::weights::SubstrateWeight<Runtime>;
 }
 
-// ── pallet-stealth-addresses (ECPDKSAP protokol) ──────────────────────
+// ── pallet-stealth-addresses (ECPDKSAP protocol) ──────────────────────
 
 parameter_types! {
-	/// Maksimalan broj objava po view tagu.
-	/// Sa 65536 mogućih tagova, ovo pokriva ~655 miliona ukupnih objava.
+	/// Maximum number of announcements per view tag.
+	/// With 65536 possible tags, this covers ~655 million total announcements.
 	pub const MaxAnnouncementsPerViewTag: u32 = 10_000;
-	/// Maksimalan broj delegacija viewing key-a po korisniku.
+	/// Maximum number of viewing key delegations per user.
 	pub const MaxDelegationsPerUser: u32 = 16;
-	/// Minimalni depozit za gas sponzorstvo: 0.01 PAS = 10^10 planck-ova.
+	/// Minimum deposit for gas sponsorship: 0.01 PAS = 10^10 planck.
 	pub const MinSponsorDeposit: u128 = 10_000_000_000;
-	/// Naknada relayeru pri povlačenju sa stealth adrese: 0.01 DOT.
-	/// Pokriva gas troškove relayera uz mali podsticaj za učešće u mreži.
+	/// Relayer fee on withdrawal from a stealth address: 0.01 DOT.
+	/// Covers the relayer's gas costs with a small incentive for network participation.
 	pub const StealthWithdrawalFee: u128 = 10_000_000_000;
 }
 

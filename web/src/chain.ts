@@ -42,7 +42,7 @@ export async function announceViaPrecompile(
   return receipt.hash;
 }
 
-// Pošalji PAS na AccountId32 stealth adresu + announce u jednoj transakciji
+// Send PAS to AccountId32 stealth address + announce in one transaction
 export async function sendAndAnnounceViaPrecompile(
   signer: ethers.Signer,
   stealthAccountId32: Uint8Array, // 32 bytes AccountId32
@@ -115,19 +115,19 @@ export async function connectMetaMask(): Promise<{ signer: ethers.Signer; addres
 
   await eth.request({ method: "eth_requestAccounts" });
 
-  // Provjeri da li je MetaMask na pravoj mreži
+  // Check if MetaMask is on the correct network
   const chainHex = await eth.request({ method: "eth_chainId", params: [] }) as string;
   const currentChain = parseInt(chainHex, 16);
 
   if (currentChain !== EXPECTED_CHAIN_ID) {
     try {
-      // Pokušaj switch na lokalnu mrežu
+      // Attempt to switch to the local network
       await eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: "0x" + EXPECTED_CHAIN_ID.toString(16) }],
       });
     } catch (switchErr: unknown) {
-      // Chain nije dodat u MetaMask — dodaj ga automatski
+      // Chain not added to MetaMask — add it automatically
       const code = (switchErr as { code?: number })?.code;
       if (code === 4902) {
         await eth.request({

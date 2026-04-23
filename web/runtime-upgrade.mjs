@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Upgraduje runtime na running zombienet chain.
- * Koristi sudo.sudo(system.setCodeWithoutChecks(wasm)).
+ * Upgrades runtime on a running zombienet chain.
+ * Uses sudo.sudo(system.setCodeWithoutChecks(wasm)).
  *
- * Korišćenje:
+ * Usage:
  *   node runtime-upgrade.mjs [--wasm <path>] [--ws <url>]
  *
  * Default WASM: ../../target/release/wbuild/stack-template-runtime/stack_template_runtime.compact.compressed.wasm
@@ -45,12 +45,10 @@ const api = await ApiPromise.create({ provider: new WsProvider(wsUrl) });
 const kr = new Keyring({ type: "sr25519" });
 const alice = kr.addFromUri("//Alice");
 
-// Provjeri trenutnu spec_version
 const ver = api.runtimeVersion;
-console.log(`\nTrenutna spec_version: ${ver.specVersion}`);
+console.log(`\nCurrent spec_version: ${ver.specVersion}`);
 
-// Pošalji upgrade
-console.log("\nSlanje sudo(system.setCodeWithoutChecks)...");
+console.log("\nSending sudo(system.setCodeWithoutChecks)...");
 await new Promise((resolve, reject) => {
   let unsub;
   api.tx.sudo
@@ -70,15 +68,15 @@ await new Promise((resolve, reject) => {
       }
 
       if (status.isInBlock) {
-        console.log("✓ U bloku:", status.asInBlock.toHex());
-        // Provjeri da li je bilo Sudo event
+        console.log("✓ In block:", status.asInBlock.toHex());
+        
         events.forEach(({ event }) => {
           console.log(" ", event.section + "." + event.method);
         });
       }
 
       if (status.isFinalized) {
-        console.log("✓ Finalizovano:", status.asFinalized.toHex());
+        console.log("✓ Finilazited:", status.asFinalized.toHex());
         unsub?.();
         resolve();
       }
@@ -87,12 +85,12 @@ await new Promise((resolve, reject) => {
     .catch(reject);
 });
 
-console.log("\n⏳ Čekam aktivaciju (novi runtime se aktivira u sledećem bloku)...");
+console.log("\n⏳ Waiting for activation (new runtime activates in the next block)...");
 await new Promise(r => setTimeout(r, 12_000));
 
 const ver2 = (await api.rpc.state.getRuntimeVersion()).specVersion;
-console.log(`Nova spec_version: ${ver2}`);
-console.log("\n✓ Runtime upgrade završen!");
+console.log(`New spec_version: ${ver2}`);
+console.log("\n✓ Runtime upgrade finished!");
 
 await api.disconnect();
 process.exit(0);

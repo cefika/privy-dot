@@ -22,7 +22,7 @@ use polkadot_sdk::{
 
 use pallet_stealth_addresses::{weights::WeightInfo, pallet::BalanceOf};
 
-// ─── Solidity ABI definicija ──────────────────────────────────────────────────
+// ─── Solidity ABI definition ──────────────────────────────────────────────────
 
 polkadot_sdk::pallet_revive::precompiles::alloy::sol! {
     interface IStealthAddresses {
@@ -39,8 +39,8 @@ polkadot_sdk::pallet_revive::precompiles::alloy::sol! {
             bytes32 metadata
         ) external;
 
-        /// Pošalji nativni token (PAS) na AccountId32 stealth adresu i odmah
-        /// objavi (announce) u istoj transakciji. Payable — šalje se ETH value.
+        /// Send the native token (PAS) to an AccountId32 stealth address and immediately
+        /// announce it in the same transaction. Payable — ETH value is sent.
         function sendAndAnnounce(
             bytes32 stealthAddress,
             bytes ephemeralPubkey,
@@ -57,11 +57,9 @@ pub struct StealthPrecompile<T>(PhantomData<T>);
 impl<T> Precompile for StealthPrecompile<T>
 where
     T: polkadot_sdk::pallet_revive::Config + pallet_stealth_addresses::Config,
-    // Razrešavamo ambigvitet — koristimo frame_system RuntimeOrigin
     <T as polkadot_sdk::frame_system::Config>::RuntimeOrigin:
         From<RawOrigin<<T as polkadot_sdk::frame_system::Config>::AccountId>>,
     <T as polkadot_sdk::frame_system::Config>::AccountId: Decode + Clone,
-    // NativeBalance mora podrzavati transfer (za sendAndAnnounce)
     <T as pallet_stealth_addresses::Config>::NativeBalance:
         FungibleMutate<<T as polkadot_sdk::frame_system::Config>::AccountId>,
     BalanceOf<T>: TryFrom<u128>,
@@ -84,7 +82,6 @@ where
 
         match input {
             registerMetaAddress(call) => {
-                // charge() prima Weight direktno
                 let weight: Weight = <T as pallet_stealth_addresses::Config>::WeightInfo
                     ::register_stealth_meta_address();
                 env.charge(weight)?;
@@ -95,13 +92,11 @@ where
                 let viewing_arr: [u8; 64] = call.viewingPubkey.as_ref()
                     .try_into()
                     .map_err(|_| Error::Revert("viewingPubkey must be 64 bytes".into()))?;
-
-                // account_id() vraća referencu — kloniramo
+                
                 let caller_account = env.caller().account_id()
                     .map_err(|_| Error::Revert("caller must be a signed account".into()))?
                     .clone();
 
-                // DispatchResult = Result<(), DispatchError> — nema .error polja
                 pallet_stealth_addresses::Pallet::<T>::register_stealth_meta_address(
                     RawOrigin::Signed(caller_account).into(),
                     spending_arr,
@@ -145,13 +140,11 @@ where
             }
 
             sendAndAnnounce(call) => {
-                // Naplati weight za announce + overhead za transfer
+                
                 let weight: Weight =
                     <T as pallet_stealth_addresses::Config>::WeightInfo::announce();
                 env.charge(weight)?;
-
-                // msg.value je u wei (10^18 skala), PAS ima 12 decimala (planck)
-                // planck = wei / 10^6
+                
                 let value_wei: U256 = env.value_transferred();
                 let value_planck_u256 = value_wei / U256::from(1_000_000u64);
                 let value_planck_u128: u128 = value_planck_u256
@@ -173,9 +166,7 @@ where
                 let caller_account = env.caller().account_id()
                     .map_err(|_| Error::Revert("caller must be a signed account".into()))?
                     .clone();
-
-                // Precompile account je već primio value_transferred pre ovog poziva.
-                // Transferujemo od precompile account-a ka stealth adresi.
+                
                 let precompile_account = env.account_id().clone();
                 <T as pallet_stealth_addresses::Config>::NativeBalance::transfer(
                     &precompile_account,
@@ -184,8 +175,7 @@ where
                     Preservation::Preserve,
                 )
                 .map_err(|_| Error::Revert("PAS transfer failed".into()))?;
-
-                // Announce u istoj transakciji
+                
                 pallet_stealth_addresses::Pallet::<T>::announce(
                     RawOrigin::Signed(caller_account).into(),
                     ephemeral_arr,

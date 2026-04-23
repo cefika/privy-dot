@@ -10,12 +10,12 @@ export type { KeyringPair, InjectedAccountWithMeta };
 
 // ── Signer union type ─────────────────────────────────────────────────────────
 
-/** Jednobrazni signer koji može biti dev keypair ili extenzija (Talisman, SubWallet…) */
+/** Unified signer that can be a dev keypair or an injected extension (Talisman, SubWallet…) */
 export type SubstrateSigner =
   | { type: "keypair"; pair: KeyringPair }
   | { type: "injected"; address: string; name?: string };
 
-/** Izvlači adresu bez obzira na tip signera */
+/** Extracts the address regardless of signer type */
 export function signerAddress(s: SubstrateSigner): string {
   return s.type === "keypair" ? s.pair.address : s.address;
 }
@@ -23,8 +23,8 @@ export function signerAddress(s: SubstrateSigner): string {
 // ── Extension wallet API ──────────────────────────────────────────────────────
 
 /**
- * Traži dozvolu od browser extenzija (Talisman, SubWallet, Polkadot.js).
- * Vraća listu account-a dostupnih u extenzijama.
+ * Requests permission from browser extensions (Talisman, SubWallet, Polkadot.js).
+ * Returns the list of accounts available in the extensions.
  */
 export async function getExtensionAccounts(): Promise<InjectedAccountWithMeta[]> {
   const extensions = await web3Enable("Privy Dot");
@@ -185,7 +185,7 @@ function parseAnnouncement(nonce: number, rawVal: unknown): AnnouncementRow | nu
   };
 }
 
-/** Vraća trenutni nonce sa lanca (= ukupan broj announcement-a dosad). */
+/** Returns the current nonce from the chain (= total number of announcements so far). */
 export async function fetchAnnouncementNonce(api: ApiPromise): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const val = await (api.query.stealthAddresses as any).announcementNonce();
@@ -193,9 +193,9 @@ export async function fetchAnnouncementNonce(api: ApiPromise): Promise<number> {
 }
 
 /**
- * Fetchuje samo announcement-e sa nonce >= fromNonce.
- * Koristi multi() umesto entries() — ne skida celu storage mapu.
- * Vraća i nextNonce kako bi caller mogao da ga sačuva.
+ * Fetches only announcements with nonce >= fromNonce.
+ * Uses multi() instead of entries() — does not download the entire storage map.
+ * Also returns nextNonce so the caller can persist it.
  */
 export async function fetchAnnouncementsSince(
   api: ApiPromise,
@@ -216,7 +216,7 @@ export async function fetchAnnouncementsSince(
   return { rows, nextNonce };
 }
 
-/** Compat: fetchuje SVE announcement-e (koristi se samo ako nema sačuvanog nonce-a). */
+/** Compat: fetches ALL announcements (used only when no saved nonce exists). */
 export async function fetchAnnouncements(api: ApiPromise): Promise<AnnouncementRow[]> {
   const { rows } = await fetchAnnouncementsSince(api, 0);
   return rows;
@@ -337,7 +337,7 @@ export async function sendStealthAssetXcm(
 }
 
 // ── Batch payroll helpers ─────────────────────────────────────────────────────
-// Call builders — vraćaju call objekat bez slanja, za upotrebu u utility.batchAll
+// Call builders — return a call object without submitting, for use in utility.batchAll
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Call = any;
@@ -524,7 +524,7 @@ export async function spendFromStealth(
   );
 }
 
-/** Šalje SVE PAS sa stealth adrese — fee se automatski oduzima (transferAll keepAlive=false) */
+/** Sends ALL PAS from the stealth address — fee is deducted automatically (transferAll keepAlive=false) */
 export async function spendAllFromStealth(
   api: ApiPromise,
   spendingPrivKey: string,
@@ -654,7 +654,7 @@ export async function withdrawFromStealth(
   stealthAddress: string,   // AccountId32 hex (from scan results)
   spendingPrivKey: string,  // ECDSA spending private key (used to SIGN only)
   destination: string,      // AccountId32 hex or SS58 of recipient
-  sponsor: SubstrateSigner, // Signer sa PAS + sredstvima u GasSponsorPool-u (podnosi i plaća fee)
+  sponsor: SubstrateSigner, // Signer with PAS + funds in GasSponsorPool (submits and pays the fee)
   assetId?: number,         // undefined = native PAS, number = pallet-assets asset
   amount?: bigint           // undefined = entire balance, bigint = specific amount
 ): Promise<string> {
@@ -682,6 +682,6 @@ export async function withdrawFromStealth(
       assetArg,                               // asset_id: Option<u32>
       amountArg                               // amount: Option<u128>
     ),
-    sponsor  // ← sponsor podnosi i plaća fee, ne stealth adresa
+    sponsor  // ← sponsor submits and pays the fee, not the stealth address
   );
 }

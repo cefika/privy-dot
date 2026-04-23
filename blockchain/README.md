@@ -1,6 +1,6 @@
 # Blockchain
 
-Polkadot SDK parachain za ECPDKSAP stealth address protokol, kompatibilan sa `polkadot-omni-node`.
+Polkadot SDK parachain for the ECPDKSAP stealth address protocol, compatible with `polkadot-omni-node`.
 
 ## Directory Guide
 
@@ -19,13 +19,13 @@ Polkadot SDK parachain za ECPDKSAP stealth address protokol, kompatibilan sa `po
 # Build runtime
 cargo build -p privy-runtime --release
 
-# Pallet unit testovi
+# Pallet unit tests
 cargo test -p pallet-stealth-addresses
 
-# Svi testovi u workspaceu
+# All tests in workspace
 SKIP_PALLET_REVIVE_FIXTURES=1 cargo test --workspace --features runtime-benchmarks
 ```
 
 ## Running Locally
 
-- [`../scripts/start-all.sh`](../scripts/start-all.sh) — Pokreće Docker node + deploy contract + frontend
+- [`../scripts/start-all.sh`](../scripts/start-all.sh) — Starts Docker node + deploys contract + frontend

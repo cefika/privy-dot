@@ -1,7 +1,7 @@
 //! ECPDKSAP — pvm-contract-macros approach
 //!
 //! Registry (registerMetaAddress / updateMetaAddress / resolve) je zakomentarisan.
-//! ID format konvencija kada se odkomentariše: "alice.dot", "bob.dot" itd.
+//! ID format convention when uncommented: "alice.dot", "bob.dot", etc.
 
 #![cfg_attr(not(feature = "abi-gen"), no_main, no_std)]
 
@@ -34,9 +34,7 @@ mod ecpdksap {
         Ok(())
     }
 
-    // ── Registry (zakomentarisan) ─────────────────────────────────────────────
-    // ID konvencija: "alice.dot", "bob.dot" — samo string, kontrakt ne proverava format.
-    // Odkomentariši kada zatreba on-chain meta address lookup.
+    // ── Registry ─────────────────────────────────────────────
     //
     // #[pvm_contract_macros::method]
     // pub fn register_meta_address(id: String, meta_address: Vec<u8>) {
@@ -55,8 +53,6 @@ mod ecpdksap {
 
     // ── Send ──────────────────────────────────────────────────────────────────
 
-    /// Emituje Announcement event i prosleđuje ETH na stealth adresu.
-    /// ETH forwarding i event emisija su i dalje ručni — framework to ne pokriva.
     #[pvm_contract_macros::method]
     pub fn send_eth_via_proxy(stealth_address: Address, r: pvm_contract_types::Bytes, view_tag: pvm_contract_types::Bytes) {
         let stealth: [u8; 20] = stealth_address.into();
@@ -66,8 +62,6 @@ mod ecpdksap {
 
     // ── View ──────────────────────────────────────────────────────────────────
 
-    /// Vraća scheme ID (2901). Renamed iz ECPDKSAP_SCHEME_ID → ecpdksapSchemeId
-    /// da prati camelCase konvenciju frameworka.
     #[pvm_contract_macros::method]
     pub fn ecpdksap_scheme_id() -> U256 {
         U256::from(SCHEME_ID)
@@ -78,13 +72,12 @@ mod ecpdksap {
         Ok(())
     }
 
-    // ── Storage helpers (zakomentarisano — koristi se samo za registry) ──────
+    // ── Storage helpers ──────
     //
     // fn meta_key(id: &[u8]) -> [u8; 32] { ... }
     // fn store_bytes(base_key: &[u8; 32], data: &[u8]) { ... }
     // fn load_bytes(base_key: &[u8; 32]) -> Vec<u8> { ... }
     //
-    // Odkomentariši zajedno sa registry metodama kada zatreba.
 
     // ── Event helpers ─────────────────────────────────────────────────────────
 

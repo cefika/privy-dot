@@ -249,7 +249,7 @@ export default function KeysPanel({ keys, address, onKeysChange, toast, onRegist
             )}
             {onRegisterEvm && (
               <p className="text-xs text-zinc-500 mt-2">
-                Registracija zahteva mali gas fee u PAS. Nije obavezna — možeš deliti meta address ručno (Copy dugme iznad).
+                Registration requires a small gas fee in PAS. Optional — you can share your meta address manually using the Copy button above.
               </p>
             )}
           </div>

@@ -50,9 +50,9 @@ alloy = { version = "1.8", features = ["contract", "provider-http", "signer-loca
 # Patch pallet-revive-proc-macro to 0.7.1 from polkadot-sdk stable2512-3.
 # Version 0.7.2 on crates.io has a compilation bug with #[stable] host function attributes.
 #
-# Patch cumulus-pallet-parachain-system: fix za DMQ head mismatch na svežem para.
-# Bug: unwrap_or({sent_at:0, reverse_idx:0}) briše genesis DMP poruke za svež para.
-# Fix: kad LastProcessedDownwardMessage=None i LastRelayChainBlockNumber=0, ne brišemo ništa.
+# Patch cumulus-pallet-parachain-system: fix for DMQ head mismatch on a fresh para.
+# Bug: unwrap_or({sent_at:0, reverse_idx:0}) deletes genesis DMP messages for a fresh para.
+# Fix: when LastProcessedDownwardMessage=None and LastRelayChainBlockNumber=0, delete nothing.
 [patch.crates-io]
 pallet-revive-proc-macro = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-3" }
 cumulus-pallet-parachain-system = { path = "./blockchain/vendor/cumulus-pallet-parachain-system" }

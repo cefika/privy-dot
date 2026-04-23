@@ -23,7 +23,7 @@ default_command = "polkadot"
   p2p_port = 30336
   prometheus_port = 9618
 
-# ── Para 1000 — naš runtime sa pallet-stealth-addresses ────────────────────────
+# ── Para 1000 — our runtime with pallet-stealth-addresses ─────────────────────
 [[parachains]]
 id = 1000
 chain = "./chain_spec.json"

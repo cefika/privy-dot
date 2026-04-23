@@ -4,15 +4,15 @@
  * Para 1000 → Para 2000
  *
  * Flow:
- *  1. Alice šalje PAS via sendStealthXcm (Para 1000 → Para 2000)
- *  2. Proveravamo announcement na Para 1000
- *  3. Čekamo da stignu pare na stealth adresu (Para 2000)
- *  4. Alice deponuje gas u sponsor pool (Para 2000)
- *  5. Stealth keypair potpisuje withdrawal poruku
- *  6. withdrawFromStealth prebacuje pare Alice-i (Para 2000)
- *  7. Štampamo sve balanse pre/posle
+ *  1. Alice sends PAS via sendStealthXcm (Para 1000 → Para 2000)
+ *  2. Check announcement on Para 1000
+ *  3. Wait for funds to arrive at the stealth address (Para 2000)
+ *  4. Alice deposits gas into sponsor pool (Para 2000)
+ *  5. Stealth keypair signs withdrawal message
+ *  6. withdrawFromStealth transfers funds to Alice (Para 2000)
+ *  7. Print all balances before/after
  *
- * Pokretanje:
+ * Usage:
  *   node test-xcm-flow.mjs
  */
 
@@ -24,12 +24,11 @@ import { u8aToHex, hexToU8a } from "@polkadot/util";
 
 const PARA_1000_WS  = "ws://127.0.0.1:9944";
 const PARA_2000_WS  = "ws://127.0.0.1:9935";
-const SEND_AMOUNT   = 5_000_000_000_000n;  // 5 PAS
-const SPONSOR_DEPO  = 1_000_000_000_000n;  // 1 PAS u gas pool
-const WITHDRAWAL_FEE = 10_000_000_000n;    // 0.01 PAS fee
-const XCM_TIMEOUT_MS = 90_000;             // 90s čekanje na XCM delivery
+const SEND_AMOUNT   = 5_000_000_000_000n;  
+const SPONSOR_DEPO  = 1_000_000_000_000n;  
+const WITHDRAWAL_FEE = 10_000_000_000n;    
+const XCM_TIMEOUT_MS = 90_000;             
 
-// Deterministički test ECDSA seed (32 bajta)
 const STEALTH_SEED = "0x" + "cd".repeat(32);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -81,7 +80,6 @@ async function pollBalance(api, address, minBalance, timeoutMs) {
   throw new Error(`Timeout: balance on ${address} never reached ${pas(minBalance)}`);
 }
 
-// SCALE-encode Option<u128> — identično paletu
 function encodeOptionU128(val) {
   if (val === null || val === undefined) return new Uint8Array([0x00]);
   const bytes = new Uint8Array(17);
@@ -91,7 +89,6 @@ function encodeOptionU128(val) {
   return bytes;
 }
 
-// SCALE-encode Option<u32>
 function encodeOptionU32(val) {
   if (val === null || val === undefined) return new Uint8Array([0x00]);
   const bytes = new Uint8Array(5);
@@ -100,8 +97,6 @@ function encodeOptionU32(val) {
   return bytes;
 }
 
-// Build withdrawal message v2 — identično paletu i substrate.ts
-// PREFIX ++ stealth[32] ++ dest[32] ++ SCALE(Option<u32>) ++ SCALE(Option<u128>)
 function buildWithdrawalMessage(stealthHex, destBytes, assetId, amount) {
   const prefix   = new TextEncoder().encode("PrivyDot::withdraw:v2");
   const stealth  = hexToU8a(stealthHex);
@@ -118,7 +113,6 @@ function buildWithdrawalMessage(stealthHex, destBytes, assetId, amount) {
   return msg;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log("╔══════════════════════════════════════════════╗");
@@ -126,12 +120,11 @@ async function main() {
   console.log("║   Para 1000 → Para 2000                      ║");
   console.log("╚══════════════════════════════════════════════╝\n");
 
-  // ── Konekcija ──────────────────────────────────────────────────────────────
   log("CONNECT", `Para 1000: ${PARA_1000_WS}`);
   const api1 = await ApiPromise.create({ provider: new WsProvider(PARA_1000_WS) });
   log("CONNECT", `Para 2000: ${PARA_2000_WS}`);
   const api2 = await ApiPromise.create({ provider: new WsProvider(PARA_2000_WS) });
-  log("CONNECT", "Oba parachain-a dostupna ✓");
+  log("CONNECT", "Both parachains available ✓");
 
   const srKr = new Keyring({ type: "sr25519" });
   const ecKr = new Keyring({ type: "ecdsa" });
@@ -139,15 +132,13 @@ async function main() {
   const alice = srKr.addFromUri("//Alice");
   log("SETUP", `Alice (sr25519): ${alice.address}`);
 
-  // Stealth ECDSA keypair — u produkciji dolazi iz WASM scan
   const stealthPair    = ecKr.addFromSeed(hexToU8a(STEALTH_SEED));
   const stealthAddress = u8aToHex(blake2AsU8a(stealthPair.publicKey, 256)); // 33-byte compressed → blake2b
   log("SETUP", `Stealth seed: ${STEALTH_SEED.slice(0, 10)}...`);
   log("SETUP", `Stealth address (Para 2000): ${stealthAddress}`);
 
-  // ── Balanse pre ────────────────────────────────────────────────────────────
   console.log("");
-  log("BEFORE", "Balanse pre testa:");
+  log("BEFORE", "Balances before test:");
   const aliceBal1  = await getBalance(api1, alice.address);
   const aliceBal2  = await getBalance(api2, alice.address);
   const stealthBal = await getBalance(api2, stealthAddress);
@@ -156,13 +147,12 @@ async function main() {
   log("BEFORE", `  Alice    Para 2000: ${pas(aliceBal2)}`);
   log("BEFORE", `  Stealth  Para 2000: ${pas(stealthBal)}`);
   log("BEFORE", `  Sponsor  Para 2000: ${pas(sponsorBal)}`);
-
-  // ── Korak 1: sendStealthXcm ─────────────────────────────────────────────────
+  
   console.log("");
-  log("STEP 1", `Šaljem ${pas(SEND_AMOUNT)} via XCM (Para 1000 → Para 2000)...`);
+  log("STEP 1", `Sending ${pas(SEND_AMOUNT)} via XCM (Para 1000 → Para 2000)...`);
   log("STEP 1", `Destination stealth: ${stealthAddress}`);
 
-  const ephemeralPubkey = new Uint8Array(64).fill(0x02); // dummy (u produkciji: WASM generisano)
+  const ephemeralPubkey = new Uint8Array(64).fill(0x02); // dummy (in production: generated by WASM)
   const viewTag         = new Uint8Array([0xcd, 0x00]);
   const metadata        = new Uint8Array(32);
   const stealthBytes    = Array.from(hexToU8a(stealthAddress));
@@ -180,11 +170,10 @@ async function main() {
   );
   log("STEP 1", `✓ XCM extrinsic in block: ${xcmBlock}`);
 
-  // ── Korak 2: Provera announcementa ─────────────────────────────────────────
   await sleep(2000);
-  log("STEP 2", "Proveravam announcement na Para 1000...");
+  log("STEP 2", "Checking announcement on Para 1000...");
   const entries = await api1.query.stealthAddresses.announcements.entries();
-  log("STEP 2", `✓ Pronađeno ${entries.length} announcement(a):`);
+  log("STEP 2", `✓ Found ${entries.length} announcement(s):`);
   for (const [key, rawVal] of entries) {
     const nonce = key.args[0].toNumber();
     const ann   = rawVal.isSome ? rawVal.unwrap() : rawVal;
@@ -192,47 +181,44 @@ async function main() {
     log("STEP 2", `  nonce=${nonce}  stealth=${JSON.stringify(json.stealthAddress ?? json.stealth_address ?? "?").slice(0, 20)}...`);
   }
 
-  // ── Korak 3: Čekanje XCM dostave ──────────────────────────────────────────
   console.log("");
-  log("STEP 3", `Čekam XCM dostavu na Para 2000 (max ${XCM_TIMEOUT_MS / 1000}s)...`);
+  log("STEP 3", `Waiting for XCM delivery on Para 2000 (max ${XCM_TIMEOUT_MS / 1000}s)...`);
   const stealthAfterXcm = await pollBalance(api2, stealthAddress, 1n, XCM_TIMEOUT_MS);
-  log("STEP 3", `✓ Stealth balans na Para 2000: ${pas(stealthAfterXcm)}`);
+  log("STEP 3", `✓ Stealth balance on Para 2000: ${pas(stealthAfterXcm)}`);
   const xcmFee = SEND_AMOUNT - stealthAfterXcm;
-  log("STEP 3", `  XCM fee oduzeto: ${pas(xcmFee)}`);
-
-  // ── Korak 4: Sponsor gas ───────────────────────────────────────────────────
+  log("STEP 3", `  XCM fee deducted: ${pas(xcmFee)}`);
+  
   console.log("");
-  log("STEP 4", "Proveravam Alice-in gas sponsor pool na Para 2000...");
+  log("STEP 4", "Checking Alice's gas sponsor pool on Para 2000...");
   const poolBal = (await api2.query.stealthAddresses.gasSponsorPool(alice.address)).toBigInt();
   if (poolBal < WITHDRAWAL_FEE) {
-    log("STEP 4", `Pool je prazan (${pas(poolBal)}), deponujem ${pas(SPONSOR_DEPO)}...`);
+    log("STEP 4", `Pool empty (${pas(poolBal)}), depositing ${pas(SPONSOR_DEPO)}...`);
     const sponsorBlock = await submitTx(
       api2.tx.stealthAddresses.sponsorGas(SPONSOR_DEPO.toString()),
       alice
     );
-    log("STEP 4", `✓ Sponsor gas deponovan u bloku: ${sponsorBlock}`);
+    log("STEP 4", `✓ Sponsor gas deposited in block: ${sponsorBlock}`);
   } else {
-    log("STEP 4", `✓ Pool vec ima ${pas(poolBal)}, preskacam depozit`);
+    log("STEP 4", `✓ Pool already has ${pas(poolBal)}, skipping deposit`);
   }
 
-  // ── Korak 5: Withdrawal ───────────────────────────────────────────────────
   console.log("");
-  log("STEP 5", "Gradim withdrawal poruku v2 i potpisujem stealth ECDSA kljucem...");
+  log("STEP 5", "Building withdrawal message v2 and signing with stealth ECDSA key...");
 
   const destBytes = decodeAddress(alice.address); // 32-byte AccountId32
   const msg       = buildWithdrawalMessage(stealthAddress, destBytes, null, null);
-  const sig       = stealthPair.sign(msg); // blake2_256 interno, 65 bajta
+  const sig       = stealthPair.sign(msg); // blake2_256 internally, 65 bytes
 
   log("STEP 5", `  Stealth:     ${stealthAddress}`);
   log("STEP 5", `  Destination: ${alice.address} (Alice)`);
   log("STEP 5", `  Sponsor:     ${alice.address} (Alice)`);
-  log("STEP 5", `  Asset:       None (nativni PAS)`);
-  log("STEP 5", `  Amount:      None (ceo balans)`);
+  log("STEP 5", `  Asset:       None (native PAS)`);
+  log("STEP 5", `  Amount:      None (full balance)`);
   log("STEP 5", `  Sig:         ${u8aToHex(sig).slice(0, 20)}...`);
 
   const aliceBal2Before = await getBalance(api2, alice.address);
 
-  log("STEP 5", "Šaljem withdrawFromStealth extrinsic (relayer = Alice)...");
+  log("STEP 5", "Sending withdrawFromStealth extrinsic (relayer = Alice)...");
   const withdrawBlock = await submitTx(
     api2.tx.stealthAddresses.withdrawFromStealth(
       stealthBytes,           // stealth: [u8; 32]
@@ -244,31 +230,29 @@ async function main() {
     ),
     alice
   );
-  log("STEP 5", `✓ Withdrawal u bloku: ${withdrawBlock}`);
+  log("STEP 5", `✓ Withdrawal in block: ${withdrawBlock}`);
 
-  // ── Finalni balanse ───────────────────────────────────────────────────────
   console.log("");
-  log("AFTER", "Balanse posle testa:");
+  log("AFTER", "Balances after test:");
   const stealthFinal  = await getBalance(api2, stealthAddress);
   const aliceBal2End  = await getBalance(api2, alice.address);
   const sponsorFinal  = (await api2.query.stealthAddresses.gasSponsorPool(alice.address)).toBigInt();
 
-  log("AFTER", `  Stealth  Para 2000:  ${pas(stealthFinal)}  (očekivano: 0)`);
+  log("AFTER", `  Stealth  Para 2000:  ${pas(stealthFinal)}  (expected: 0)`);
   log("AFTER", `  Alice    Para 2000:  ${pas(aliceBal2End)}`);
-  log("AFTER", `  Sponsor  Para 2000:  ${pas(sponsorFinal)}  (smanjeno za ${pas(WITHDRAWAL_FEE)})`);
+  log("AFTER", `  Sponsor  Para 2000:  ${pas(sponsorFinal)}  (reduced by ${pas(WITHDRAWAL_FEE)})`);
 
   const aliceGained = aliceBal2End - aliceBal2Before;
-  log("AFTER", `  Alice primila: ${pas(aliceGained)} (stealth balans - withdrawal fee)`);
-
-  // ── Verifikacija ──────────────────────────────────────────────────────────
+  log("AFTER", `  Alice received: ${pas(aliceGained)} (stealth balance - withdrawal fee)`);
+  
   console.log("");
   const errors = [];
-  if (stealthFinal !== 0n) errors.push(`Stealth nije prazan: ${pas(stealthFinal)}`);
-  if (aliceGained <= 0n)   errors.push(`Alice nije primila pare`);
+  if (stealthFinal !== 0n) errors.push(`Stealth not empty: ${pas(stealthFinal)}`);
+  if (aliceGained <= 0n)   errors.push(`Alice did not receive funds`);
 
   if (errors.length === 0) {
     console.log("╔══════════════════════════════════╗");
-    console.log("║   Test PROŠAO ✓                  ║");
+    console.log("║   Test PASSED ✓                  ║");
     console.log("╚══════════════════════════════════╝");
   } else {
     console.log("╔══════════════════════════════════╗");

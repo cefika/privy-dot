@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Kreira USDC asset (id=1) na Para 1000 i Para 2000 i mintuje po 1000 USDC
- * svim dev accountima (Alice, Bob, Charlie).
+ * Creates USDC asset (id=1) on Para 1000 and Para 2000 and mints 1000 USDC
+ * to all dev accounts (Alice, Bob, Charlie).
  *
- * Koriscenje:
+ * Usage:
  *   node setup-usdc-all.mjs
  */
 
@@ -12,7 +12,7 @@ import { ApiPromise, WsProvider, Keyring } from "@polkadot/api";
 const ASSET_ID = 1;
 const PARA_1000_WS = "ws://127.0.0.1:9944";
 const PARA_2000_WS = "ws://127.0.0.1:9935";
-const MINT_AMOUNT = 1000n * 1_000_000n; // 1000 USDC (6 decimala)
+const MINT_AMOUNT = 1000n * 1_000_000n; // 1000 USDC (6 decimals)
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -51,10 +51,10 @@ async function setupPara(ws, label) {
   console.log(`Bob:     ${bob.address}`);
   console.log(`Charlie: ${charlie.address}`);
 
-  // Proveri/obrisi stari asset
+  // Check/delete existing asset
   const assetInfo = await api.query.assets.asset(ASSET_ID);
   const exists = assetInfo.isSome;
-  console.log(`\nAsset ${ASSET_ID} postoji: ${exists}`);
+  console.log(`\nAsset ${ASSET_ID} exists: ${exists}`);
 
   if (exists) {
     const status = assetInfo.unwrap().status.toString();
@@ -86,7 +86,7 @@ async function setupPara(ws, label) {
     await sleep(3000);
   }
 
-  // forceCreate via sudo (is_sufficient=true — stealth adrese mogu primiti bez PAS-a)
+  // forceCreate via sudo (is_sufficient=true — stealth addresses can receive without PAS)
   console.log("→ sudo(assets.forceCreate) is_sufficient=true...");
   await send(api.tx.sudo.sudo(
     api.tx.assets.forceCreate(ASSET_ID, alice.address, true, 1)
@@ -107,7 +107,7 @@ async function setupPara(ws, label) {
   }
 
   const meta = await api.query.assets.metadata(ASSET_ID);
-  console.log(`\n✓ ${label} spreman: ${meta.symbol.toUtf8()}, decimals=${meta.decimals}`);
+  console.log(`\n✓ ${label} ready: ${meta.symbol.toUtf8()}, decimals=${meta.decimals}`);
 
   await api.disconnect();
 }
@@ -119,6 +119,6 @@ async function main() {
 }
 
 main().catch(e => {
-  console.error("GREŠKA:", e.message);
+  console.error("ERROR:", e.message);
   process.exit(1);
 });

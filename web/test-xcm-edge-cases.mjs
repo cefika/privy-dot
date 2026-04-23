@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * Edge case testovi za stealth pallet (Para 2000)
+ * Edge case tests for stealth pallet (Para 2000)
  *
- * 1. Pogrešan potpis → InvalidProof
- * 2. Sponsor bez para u pool-u → InsufficientSponsorFunds
- * 3. Prazan stealth balans → ZeroAmount
- * 4. Pogrešna destination u poruci → InvalidProof
- * 5. Delimičan iznos (partial withdraw) → tačan iznos prebačen
- * 6. Replay isti potpis → ZeroAmount (stealth je prazan)
+ * 1. Wrong signature → InvalidProof
+ * 2. Sponsor with no funds in pool → InsufficientSponsorFunds
+ * 3. Empty stealth balance → ZeroAmount
+ * 4. Wrong destination in message → InvalidProof
+ * 5. Partial amount (partial withdraw) → exact amount transferred
+ * 6. Replay same signature → ZeroAmount (stealth is empty)
  *
- * Pokretanje:
+ * Usage:
  *   node test-xcm-edge-cases.mjs
  */
 
@@ -120,14 +120,14 @@ function makeStealth(ecKr, seed) {
 async function assertFails(label, fn, expectedError, api) {
   try {
     await fn(api);
-    log(label, `✗ FAIL — trebalo je da baci "${expectedError}" ali je prošlo`);
+    log(label, `✗ FAIL — expected "${expectedError}" to be thrown but it passed`);
     failed++;
   } catch (e) {
     if (e.message.includes(expectedError)) {
       log(label, `✓ PASS — ${expectedError} ✓`);
       passed++;
     } else {
-      log(label, `✗ FAIL — očekivano "${expectedError}", dobijeno: ${e.message}`);
+      log(label, `✗ FAIL — expected "${expectedError}", got: ${e.message}`);
       failed++;
     }
   }
@@ -176,39 +176,35 @@ async function main() {
   log("SETUP", `partial stealth: ${partial.address}`);
   log("SETUP", `replay  stealth: ${replay.address}`);
 
-  // Osiguraj gas pool za Alice
   const poolBal = (await api2.query.stealthAddresses.gasSponsorPool(alice.address)).toBigInt();
   if (poolBal < WITHDRAWAL_FEE * 10n) {
-    log("SETUP", `Deponujem ${pas(SPONSOR_DEPO)} u gas pool...`);
+    log("SETUP", `Depositing ${pas(SPONSOR_DEPO)} into gas pool...`);
     await submitTx(api2.tx.stealthAddresses.sponsorGas(SPONSOR_DEPO.toString()), alice, api2);
   }
   log("SETUP", `Gas pool: ${pas((await api2.query.stealthAddresses.gasSponsorPool(alice.address)).toBigInt())}\n`);
 
-  // ── Test 1: Pogrešan potpis → InvalidProof ─────────────────────────────────
-  console.log("── Test 1: Pogrešan potpis ──────────────────────────────────");
+  console.log("── Test 1: Wrong signature ──────────────────────────────────");
   await fund(api2, alice, main.address, FUND_AMOUNT);
   await assertFails("1-BadSig", async (api) => {
     const msg    = buildMsg(main.address, aliceDest, null, null);
-    const badSig = wrong.pair.sign(msg); // pogrešan keypair potpisuje
+    const badSig = wrong.pair.sign(msg); // wrong keypair signs
     return submitTx(
       api.tx.stealthAddresses.withdrawFromStealth(main.bytes, alice.address, Array.from(badSig), alice.address, null, null),
       alice, api
     );
   }, "InvalidProof", api2);
-
-  // ── Test 2: Sponsor bez sredstava → InsufficientSponsorFunds ──────────────
-  console.log("\n── Test 2: Sponsor bez sredstava ────────────────────────────");
+  
+  console.log("\n── Test 2: Sponsor with no funds ────────────────────────────");
   await assertFails("2-NoSponsor", async (api) => {
     const msg = buildMsg(main.address, aliceDest, null, null);
     const sig = main.pair.sign(msg);
     return submitTx(
-      api.tx.stealthAddresses.withdrawFromStealth(main.bytes, alice.address, Array.from(sig), bob.address, null, null), // bob nema pool
+      api.tx.stealthAddresses.withdrawFromStealth(main.bytes, alice.address, Array.from(sig), bob.address, null, null), // bob has no pool
       alice, api
     );
   }, "InsufficientSponsorFunds", api2);
-
-  // ── Test 3: Prazna stealth adresa → ZeroAmount ────────────────────────────
-  console.log("\n── Test 3: Prazna stealth adresa ────────────────────────────");
+  
+  console.log("\n── Test 3: Empty stealth address ────────────────────────────");
   await assertFails("3-ZeroBal", async (api) => {
     const msg = buildMsg(wrong.address, aliceDest, null, null);
     const sig = wrong.pair.sign(msg);
@@ -217,25 +213,23 @@ async function main() {
       alice, api
     );
   }, "ZeroAmount", api2);
-
-  // ── Test 4: Pogrešna destination u poruci → InvalidProof ──────────────────
-  console.log("\n── Test 4: Pogrešna destination u poruci ────────────────────");
+  
+  console.log("\n── Test 4: Wrong destination in message ─────────────────────");
   await fund(api2, alice, partial.address, FUND_AMOUNT);
   await assertFails("4-WrongDest", async (api) => {
-    const msg = buildMsg(partial.address, bobDest, null, null); // potpisan za Bob-a
+    const msg = buildMsg(partial.address, bobDest, null, null);
     const sig = partial.pair.sign(msg);
     return submitTx(
-      api.tx.stealthAddresses.withdrawFromStealth(partial.bytes, alice.address, Array.from(sig), alice.address, null, null), // šalje Alice-i
+      api.tx.stealthAddresses.withdrawFromStealth(partial.bytes, alice.address, Array.from(sig), alice.address, null, null),
       alice, api
     );
   }, "InvalidProof", api2);
-
-  // ── Test 5: Delimičan iznos (partial withdraw) ────────────────────────────
-  console.log("\n── Test 5: Delimičan iznos ──────────────────────────────────");
+  
+  console.log("\n── Test 5: Partial amount ───────────────────────────────────");
   const PARTIAL = 5_000_000_000_000n; // 5 PAS od 20 PAS
   const partialBefore = await getBalance(api2, partial.address);
-  log("5-Partial", `Stealth balans pre: ${pas(partialBefore)}`);
-  log("5-Partial", `Šaljem delimičan iznos: ${pas(PARTIAL)}`);
+  log("5-Partial", `Stealth balance before: ${pas(partialBefore)}`);
+  log("5-Partial", `Sending partial amount: ${pas(PARTIAL)}`);
 
   await assertOk("5-Partial", async (api) => {
     const msg = buildMsg(partial.address, aliceDest, null, PARTIAL);
@@ -247,37 +241,35 @@ async function main() {
   }, api2);
 
   const partialAfter = await getBalance(api2, partial.address);
-  log("5-Partial", `Stealth balans posle: ${pas(partialAfter)} (očekivano ~${pas(partialBefore - PARTIAL)})`);
+  log("5-Partial", `Stealth balance after: ${pas(partialAfter)} (expected ~${pas(partialBefore - PARTIAL)})`);
   if (partialAfter > 0n && partialAfter < partialBefore) {
-    log("5-Partial", `✓ Parcijalan withdrawal ispravan`); passed++;
+    log("5-Partial", `✓ Partial withdrawal correct`); passed++;
   } else {
-    log("5-Partial", `✗ Neočekivan balans`); failed++;
+    log("5-Partial", `✗ Unexpected balance`); failed++;
   }
-
-  // ── Test 6: Replay attack → ZeroAmount ────────────────────────────────────
+  
   console.log("\n── Test 6: Replay attack ────────────────────────────────────");
   await fund(api2, alice, replay.address, FUND_AMOUNT);
 
   const replayMsg = buildMsg(replay.address, aliceDest, null, null);
   const replaySig = replay.pair.sign(replayMsg);
 
-  log("6-Replay", "Prvi withdrawal (treba da prođe)...");
+  log("6-Replay", "First withdrawal (should pass)...");
   await assertOk("6-Replay-1", async (api) => submitTx(
     api.tx.stealthAddresses.withdrawFromStealth(replay.bytes, alice.address, Array.from(replaySig), alice.address, null, null),
     alice, api
   ), api2);
 
-  log("6-Replay", "Drugi isti withdrawal (treba da pada sa ZeroAmount)...");
+  log("6-Replay", "Second identical withdrawal (should fail with ZeroAmount)...");
   await assertFails("6-Replay-2", async (api) => submitTx(
     api.tx.stealthAddresses.withdrawFromStealth(replay.bytes, alice.address, Array.from(replaySig), alice.address, null, null),
     alice, api
   ), "ZeroAmount", api2);
-
-  // ── Rezultati ─────────────────────────────────────────────────────────────
+  
   console.log("\n╔══════════════════════════════════════════════╗");
-  console.log(`║   Rezultati: ${String(passed).padEnd(2)} prošlo, ${String(failed).padEnd(2)} palo          ║`);
+  console.log(`║   Results: ${String(passed).padEnd(2)} passed, ${String(failed).padEnd(2)} failed            ║`);
   console.log(failed === 0
-    ? "║   Svi testovi PROŠLI ✓                       ║"
+    ? "║   All tests PASSED ✓                         ║"
     : "║   Neki testovi PALI ✗                        ║");
   console.log("╚══════════════════════════════════════════════╝");
 
@@ -287,6 +279,6 @@ async function main() {
 }
 
 main().catch(e => {
-  console.error("\n✗ Neočekivana greška:", e.message);
+  console.error("\n✗ Unexpected error:", e.message);
   process.exit(1);
 });

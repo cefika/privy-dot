@@ -1,29 +1,25 @@
 /**
- * Test skript za StealthPrecompile na adresi 0x0000000000000000000000000000000010000000
+ * Test script for StealthPrecompile at address 0x0000000000000000000000000000000010000000
  *
- * Pokretanje:
+ * Usage:
  *   node test-precompile.mjs
  *
- * Preduslovi:
- *   - Lokalni node pokrenut sa novim runtimeom (koji sadrži precompile)
- *   - EVM RPC dostupan na http://127.0.0.1:8545
- *   - Substrate WS dostupan na ws://127.0.0.1:9944
+ * Prerequisites:
+ *   - Local node running with the new runtime (which includes the precompile)
+ *   - EVM RPC available at http://127.0.0.1:8545
+ *   - Substrate WS available at ws://127.0.0.1:9944
  */
 
 import { ethers } from "ethers";
 import { ApiPromise, WsProvider, Keyring } from "@polkadot/api";
-import { u8aToHex } from "@polkadot/util";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-// AddressMatcher::Fixed(0x1000) → bytes[16]=0x10, bytes[17]=0x00, ostatak=0
 const PRECOMPILE_ADDR = "0x0000000000000000000000000000000010000000";
 
 const EVM_RPC  = "http://127.0.0.1:8545";
 const SUB_WS   = "ws://127.0.0.1:9944";
 
-// Alicia — dev account, ima ETH na EVM strani
-// Private key = polkadot dev key za Alicu mapiran u EVM format
 const ALICE_ETH_PRIVKEY =
   "0xe5be9a5092b81bca64be81d212e7f2f9eba183bb7a90954f7b76361f6edb5c0a";
 
@@ -59,8 +55,7 @@ async function main() {
   const keyring   = new Keyring({ type: "sr25519" });
   const alicePair = keyring.addFromUri("//Alice");
   console.log("Substrate Alice:", alicePair.address);
-
-  // Fondiranje EVM adrese ako nema balansa
+  
   // AccountId32Mapper: H160 → H160 ++ [0xEE; 12]  (pallet-revive fallback mapping)
   const evmAccountId = "0x" + wallet.address.slice(2).toLowerCase() + "ee".repeat(12);
 
@@ -68,24 +63,23 @@ async function main() {
   console.log("EVM balance:", ethers.formatEther(balance), "ETH");
 
   if (balance === 0n) {
-    console.log("Fondiranje EVM adrese sa Substrate Alice...");
+    console.log("Funding EVM address from Substrate Alice...");
     // 10 DOT = 10 * 10^10 planck (decimals=10 na Substrate strani)
     const amount = 10n * 10n ** 10n;
     await new Promise((resolve, reject) => {
       api.tx.balances.transferKeepAlive(evmAccountId, amount)
         .signAndSend(alicePair, ({ status, dispatchError }) => {
           if (dispatchError) reject(new Error(dispatchError.toString()));
-          if (status.isInBlock) { console.log("Fondiranje u bloku:", status.asInBlock.toString()); resolve(); }
+          if (status.isInBlock) { console.log("Funding in block:", status.asInBlock.toString()); resolve(); }
         }).catch(reject);
     });
-    // Čekaj par sekundi da se balans propagira
     await new Promise(r => setTimeout(r, 4000));
     balance = await provider.getBalance(wallet.address);
-    console.log("EVM balance poslije fondiranja:", ethers.formatEther(balance), "ETH");
+    console.log("EVM balance after funding:", ethers.formatEther(balance), "ETH");
   }
 
   if (balance === 0n) {
-    console.error("❌ Fondiranje nije uspjelo");
+    console.error("❌ Funding failed");
     process.exit(1);
   }
 
@@ -93,19 +87,19 @@ async function main() {
 
   console.log("\n--- Test 1: registerMetaAddress ---");
 
-  // Dummy 33-bajtni spending pubkey (0x02 prefix = kompresovani secp256k1)
+  // Dummy 33-byte spending pubkey (0x02 prefix = compressed secp256k1)
   const spendingPubkey = new Uint8Array(33);
   spendingPubkey[0] = 0x02;
   spendingPubkey[1] = 0xAB;
 
-  // Dummy 64-bajtni viewing pubkey (BN254 G1)
+  // Dummy 64-byte viewing pubkey (BN254 G1)
   const viewingPubkey = new Uint8Array(64);
   viewingPubkey[0] = 0x01;
 
   const precompile = new ethers.Contract(PRECOMPILE_ADDR, ABI, wallet);
 
   try {
-    console.log("Šaljem registerMetaAddress transakciju...");
+    console.log("Sending registerMetaAddress transaction...");
     const tx = await precompile.registerMetaAddress(
       hex(spendingPubkey),
       hex(viewingPubkey),
@@ -114,27 +108,27 @@ async function main() {
     );
     console.log("TX hash:", tx.hash);
     const receipt = await tx.wait();
-    console.log("Uključeno u blok:", receipt.blockNumber);
-    console.log("Gas potrošen:", receipt.gasUsed.toString());
+    console.log("Included in block:", receipt.blockNumber);
+    console.log("Gas used:", receipt.gasUsed.toString());
 
-    // Provjeri Substrate storage — Alice-ina EVM adresa mapira na AccountId32
+    // Check Substrate storage — Alice's EVM address maps to AccountId32
     // AccountId32Mapper: H160 → H160 ++ [0xEE; 12]
     const aliceEvm   = wallet.address.toLowerCase();
     const aliceSubId = "0x" + aliceEvm.slice(2) + "ee".repeat(12);
-    console.log("\nProvjera Substrate storage...");
+    console.log("\nChecking Substrate storage...");
     console.log("AccountId32 (EVM mapped):", aliceSubId);
 
     const stored = await api.query.stealthAddresses.stealthMetaAddressRegistry(aliceSubId);
     if (stored.isSome) {
       const meta = stored.unwrap();
-      console.log("✅ StorageMap ažuriran!");
+      console.log("✅ StorageMap updated!");
       console.log("  scheme_id:", meta.schemeId.toNumber());
     } else {
-      console.log("❌ Storage nije ažuriran — precompile možda nije registrovan ili origin mapping nije tačan");
+      console.log("❌ Storage not updated — precompile may not be registered or origin mapping is incorrect");
     }
 
   } catch (err) {
-    console.error("❌ Greška:", err.message ?? err);
+    console.error("❌ Error:", err.message ?? err);
   }
 
   // ── Test 2: announce ──────────────────────────────────────────────────────
@@ -147,7 +141,7 @@ async function main() {
   const metadata        = new Uint8Array(32);
 
   try {
-    console.log("Šaljem announce transakciju...");
+    console.log("Sending announce transaction...");
     const tx = await precompile.announce(
       hex(ephemeralPubkey),
       hex(viewTag),
@@ -157,22 +151,22 @@ async function main() {
     );
     console.log("TX hash:", tx.hash);
     const receipt = await tx.wait();
-    console.log("Uključeno u blok:", receipt.blockNumber);
+    console.log("Included in block:", receipt.blockNumber);
 
-    // Provjeri storage — nonce je 0 za prvu objavu
+    // Check storage — nonce is 0 for the first announcement
     const ann = await api.query.stealthAddresses.announcements(0);
     if (ann.isSome) {
-      console.log("✅ Announcement upisana na nonce 0!");
+      console.log("✅ Announcement written at nonce 0!");
     } else {
-      console.log("❌ Announcement nije pronađena u storage-u");
+      console.log("❌ Announcement not found in storage");
     }
 
   } catch (err) {
-    console.error("❌ Greška:", err.message ?? err);
+    console.error("❌ Error:", err.message ?? err);
   }
 
   await api.disconnect();
-  console.log("\n=== Gotovo ===");
+  console.log("\n=== Finished ===");
 }
 
 main().catch(console.error);

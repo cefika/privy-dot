@@ -1,24 +1,24 @@
 //! # Pallet Stealth Addresses
 //!
-//! Implementacija ECPDKSAP (Elliptic Curve Pairing Dual Key Stealth Address Protocol)
-//! na nivou Substrate runtime-a.
+//! Implementation of ECPDKSAP (Elliptic Curve Pairing Dual Key Stealth Address Protocol)
+//! at the Substrate runtime level.
 //!
-//! ## Šta ovaj palet radi
+//! ## What this pallet does
 //!
-//! - **Registar meta-adresa** — korisnici registruju (spending_pubkey, viewing_pubkey) jednom;
-//!   svi parachain-ovi u Polkadot mreži ih mogu čitati putem XCM-a.
-//! - **Indeks objava** — pošiljalac poziva `announce` nakon transakcije; palet automatski
-//!   indeksira objavu po view tagu, pa primalac skenira samo ~1/65536 svih objava.
-//! - **Gas sponzorstvo** — stealth adresa nema nativni token; sponzori deponuju DOT u pool,
-//!   a palet pokriva naknadu pri povlačenju i uzima proviziju iz povučenih sredstava.
-//! - **Delegacija viewing key-a** — primalac može delegirati viewing key revizoru/inspektoru
-//!   za vremenski ograničen period bez otkrivanja spending key-a.
+//! - **Meta-address registry** — users register (spending_pubkey, viewing_pubkey) once;
+//!   all parachains in the Polkadot network can read them via XCM.
+//! - **Announcement index** — the sender calls `announce` after a transaction; the pallet
+//!   automatically indexes the announcement by view tag, so the recipient scans only ~1/65536 of all announcements.
+//! - **Gas sponsorship** — a stealth address has no native token; sponsors deposit DOT into a pool,
+//!   and the pallet covers the fee on withdrawal, taking a commission from the withdrawn funds.
+//! - **Viewing key delegation** — the recipient can delegate the viewing key to an auditor/inspector
+//!   for a time-limited period without revealing the spending key.
 //!
-//! ## Integracija sa EVM ugovorom
+//! ## Integration with the EVM contract
 //!
-//! Postojeći ECPDKSAP PVM ugovor (`contracts/rust/`) emituje `Announcement` evente.
-//! Precompile (buduća faza) ce mostiti EVM pozive ka ovim extrinsicima.
-//! Za sada, extrinsici se pozivaju direktno putem Substrate transakcija ili XCM-a.
+//! The existing ECPDKSAP PVM contract (`contracts/rust/`) emits `Announcement` events.
+//! The precompile (future phase) will bridge EVM calls to these extrinsics.
+//! For now, extrinsics are called directly via Substrate transactions or XCM.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -44,144 +44,144 @@ pub mod pallet {
     use frame::traits::tokens::{Fortitude, Precision, Preservation};
     use polkadot_sdk::staging_xcm::prelude::*;
 
-    /// Tip bilansa nativnog tokena izveden iz `NativeBalance` asociranog tipa.
+    /// Balance type for the native token, derived from the `NativeBalance` associated type.
     pub type BalanceOf<T> = <<T as Config>::NativeBalance as FungibleInspect<
         <T as frame_system::Config>::AccountId,
     >>::Balance;
 
-    /// Tip bilansa pallet-assets tokena izveden iz `Assets` asociranog tipa.
+    /// Balance type for pallet-assets tokens, derived from the `Assets` associated type.
     pub(crate) type AssetBalanceOf<T> = <<T as Config>::Assets as fungibles::Inspect<
         <T as frame_system::Config>::AccountId,
     >>::Balance;
 
     // =========================================================================
-    // TIPOVI I STRUKTURE
+    // TYPES AND STRUCTURES
     // =========================================================================
 
-    /// Stealth meta-adresa — javni deo para ključeva korisnika.
+    /// Stealth meta-address — the public part of a user's key pair.
     ///
-    /// Protokol: ECPDKSAP Protocol 3
-    /// - `spending_pubkey` : K = k × G  na Secp256k1 (33 bajta, kompresovano)
-    /// - `viewing_pubkey`  : V = v × G₁ na BN254 G1   (64 bajta, nekompresovano)
-    /// - `scheme_id`       : identifikator šeme (ECPDKSAP koristi 2901)
+    /// Protocol: ECPDKSAP Protocol 3
+    /// - `spending_pubkey` : K = k × G  on Secp256k1 (33 bytes, compressed)
+    /// - `viewing_pubkey`  : V = v × G₁ on BN254 G1   (64 bytes, uncompressed)
+    /// - `scheme_id`       : scheme identifier (ECPDKSAP uses 2901)
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug, PartialEq)]
     pub struct StealthMetaAddress {
-        /// Javni ključ za trošenje — Secp256k1, 33 bajta kompresovano
+        /// Spending public key — Secp256k1, 33 bytes compressed
         pub spending_pubkey: [u8; 33],
-        /// Javni ključ za gledanje — BN254 G1, 64 bajta nekompresovano (x ++ y)
+        /// Viewing public key — BN254 G1, 64 bytes uncompressed (x ++ y)
         pub viewing_pubkey: [u8; 64],
-        /// Identifikator šeme (npr. 2901 za ECPDKSAP)
+        /// Scheme identifier (e.g. 2901 for ECPDKSAP)
         pub scheme_id: u32,
     }
 
-    /// Objava transakcije — podatak koji pošiljalac upisuje na lanac.
+    /// Transaction announcement — data that the sender writes on chain.
     ///
-    /// Primalac skenira `ViewTagIndex` za svoj view tag, pa za svaki pogodak
-    /// radi pun kriptografski test koristeći `ephemeral_pubkey` i svoj `viewing_key`.
+    /// The recipient scans `ViewTagIndex` for their view tag, then for each hit
+    /// performs a full cryptographic check using `ephemeral_pubkey` and their `viewing_key`.
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
     pub struct Announcement<AccountId> {
-        /// Efemerni javni ključ R = r × G₁ — BN254 G1, 64 bajta
+        /// Ephemeral public key R = r × G₁ — BN254 G1, 64 bytes
         pub ephemeral_pubkey: [u8; 64],
-        /// View tag — prvih 2 bajta od hash(r × V)
-        /// Smanjuje broj lažnih poklapanja na ~1/65536 u poređenju sa punim skeniranjem.
+        /// View tag — first 2 bytes of hash(r × V)
+        /// Reduces false positives to ~1/65536 compared to full scanning.
         pub view_tag: [u8; 2],
-        /// Stealth adresa na koju su sredstva poslata
+        /// Stealth address to which funds were sent
         pub stealth_address: AccountId,
-        /// Opcionalni metapodaci (tip tokena, iznos itd.) — 32 bajta
+        /// Optional metadata (token type, amount, etc.) — 32 bytes
         pub metadata: [u8; 32],
     }
 
-    /// Delegacija viewing key-a — compliance sloj protokola.
+    /// Viewing key delegation — the compliance layer of the protocol.
     ///
-    /// Korisnik može delegirati viewing key inspektoru/računovođi za određeni
-    /// vremenski period. Delegat može VIDETI transakcije ali NE može trošiti.
-    /// Viewing key je enkriptovan javnim ključem delegata pre upisa na lanac.
+    /// A user can delegate the viewing key to an inspector/accountant for a
+    /// specific time period. The delegate can VIEW transactions but CANNOT spend.
+    /// The viewing key is encrypted with the delegate's public key before being written on chain.
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
     pub struct ViewingKeyDelegation<AccountId, BlockNumber> {
-        /// Kome je delegiran pristup
+        /// Who the access is delegated to
         pub delegate: AccountId,
-        /// Od kog bloka važi
+        /// From which block it is valid
         pub valid_from: BlockNumber,
-        /// Do kog bloka važi (None = bez isteka)
+        /// Until which block it is valid (None = no expiry)
         pub valid_until: Option<BlockNumber>,
-        /// Viewing key enkriptovan javnim ključem delegata (ECIES ili slično)
+        /// Viewing key encrypted with the delegate's public key (ECIES or similar)
         pub encrypted_viewing_key: [u8; 64],
     }
 
     // =========================================================================
-    // HOLD REASON — razlog zaključavanja sredstava sponzora
+    // HOLD REASON — reason for locking sponsor funds
     // =========================================================================
 
-    /// Razlog zašto su sponzorova sredstva zaključana u Balances paletu.
+    /// Reason why the sponsor's funds are locked in the Balances pallet.
     ///
-    /// Runtime automatski kombinuje `HoldReason` enume svih paleta u
-    /// `RuntimeHoldReason` — isti mehanizam koji koriste `pallet_staking`,
-    /// `pallet_democracy` itd.
+    /// The runtime automatically combines `HoldReason` enums from all pallets into
+    /// `RuntimeHoldReason` — the same mechanism used by `pallet_staking`,
+    /// `pallet_democracy`, etc.
     #[pallet::composite_enum]
     pub enum HoldReason {
-        /// Sredstva zaključana kao depozit u gas sponsor pool-u.
+        /// Funds locked as a deposit in the gas sponsor pool.
         SponsorPool,
     }
 
     // =========================================================================
-    // KONFIGURACIJA PALETA
+    // PALLET CONFIGURATION
     // =========================================================================
 
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
-        /// Maksimalan broj objava po view tagu (globalno kroz ceo lanac).
+        /// Maximum number of announcements per view tag (globally across the entire chain).
         #[pallet::constant]
         type MaxAnnouncementsPerViewTag: Get<u32>;
 
-        /// Maksimalan broj delegacija viewing key-a po korisniku.
+        /// Maximum number of viewing key delegations per user.
         #[pallet::constant]
         type MaxDelegationsPerUser: Get<u32>;
 
-        /// Minimalan depozit za gas sponzorstvo (u planck-ovima).
+        /// Minimum deposit for gas sponsorship (in planck).
         #[pallet::constant]
         type MinSponsorDeposit: Get<u128>;
 
-        /// Naknada koja se oslobađa sponzoru i prosleđuje relayeru pri svakom
-        /// povlačenju sa stealth adrese (u planck-ovima).
+        /// Fee released to the sponsor and forwarded to the relayer on each
+        /// withdrawal from a stealth address (in planck).
         #[pallet::constant]
         type WithdrawalFee: Get<u128>;
 
-        /// Interfejs ka nativnom tokenu — za zaključavanje i transfer sredstava.
+        /// Interface to the native token — for locking and transferring funds.
         ///
-        /// U runtimeu se postavlja na `Balances` (pallet_balances instancu).
-        /// Mora podržavati `hold`/`release` mehanizam za gas sponsor pool.
+        /// In the runtime this is set to `Balances` (the pallet_balances instance).
+        /// Must support the `hold`/`release` mechanism for the gas sponsor pool.
         type NativeBalance: FungibleInspect<Self::AccountId>
             + FungibleMutate<Self::AccountId>
             + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>;
 
-        /// Runtime-nivo hold reason enum koji uključuje naš `HoldReason`.
+        /// Runtime-level hold reason enum that includes our `HoldReason`.
         type RuntimeHoldReason: From<HoldReason>;
 
-        /// Identifikator asset-a u pallet-assets (u runtimeu je `u32`).
-        /// `Into<u64>` je potreban za XCM GeneralIndex enkodovanje.
+        /// Asset identifier in pallet-assets (in the runtime this is `u32`).
+        /// `Into<u64>` is required for XCM GeneralIndex encoding.
         type AssetId: Member + Parameter + MaxEncodedLen + Clone + Into<u64>;
 
-        /// Indeks Assets paleta u construct_runtime! (npr. 52).
-        /// Koristi se za konstruisanje XCM asset location-a.
+        /// Index of the Assets pallet in construct_runtime! (e.g. 52).
+        /// Used to construct the XCM asset location.
         #[pallet::constant]
         type AssetsPalletIndex: Get<u8>;
 
-        /// Interfejs ka pallet-assets — za transfer ERC20-kompatibilnih tokena
-        /// (npr. USDC, rSDC) sa stealth adrese.
+        /// Interface to pallet-assets — for transferring ERC20-compatible tokens
+        /// (e.g. USDC, rSDC) from a stealth address.
         ///
-        /// Gas sponzorstvo uvek ide u nativnom tokenu (PAS/DOT);
-        /// ovaj tip pokriva samo transfer samog asset-a.
+        /// Gas sponsorship always uses the native token (PAS/DOT);
+        /// this type covers only the transfer of the asset itself.
         type Assets: fungibles::Inspect<Self::AccountId, AssetId = Self::AssetId>
             + fungibles::Mutate<Self::AccountId>;
 
-        /// XCM sender — za slanje cross-chain poruka.
+        /// XCM sender — for sending cross-chain messages.
         type XcmSender: SendXcm;
 
-        /// RuntimeCall tip — potreban za enkodovanje Transact XCM poziva.
+        /// RuntimeCall type — required for encoding Transact XCM calls.
         type RuntimeCall: codec::Encode + From<Call<Self>>;
 
-        /// Težine operacija.
+        /// Operation weights.
         type WeightInfo: WeightInfo;
     }
 
@@ -192,12 +192,12 @@ pub mod pallet {
     #[pallet::pallet]
     pub struct Pallet<T>(_);
 
-    /// Registar stealth meta-adresa.
+    /// Stealth meta-address registry.
     ///
     /// AccountId → StealthMetaAddress
     ///
-    /// Prednost nad EVM registrom: dostupan svim parachain-ovima putem XCM-a,
-    /// bez EVM overhead-a, direktno čitljiv iz runtime API-ja.
+    /// Advantage over an EVM registry: available to all parachains via XCM,
+    /// no EVM overhead, directly readable from the runtime API.
     #[pallet::storage]
     pub type StealthMetaAddressRegistry<T: Config> = StorageMap<
         _,
@@ -207,10 +207,10 @@ pub mod pallet {
         OptionQuery,
     >;
 
-    /// Objave — centralna lista, indeksirana po nonce-u.
+    /// Announcements — central list, indexed by nonce.
     ///
-    /// Primalac čita `ViewTagIndex` za filtriranje, pa po potrebi učitava
-    /// konkretnu objavu iz ovog storage-a.
+    /// The recipient reads `ViewTagIndex` for filtering, then loads the
+    /// specific announcement from this storage on demand.
     #[pallet::storage]
     pub type Announcements<T: Config> = StorageMap<
         _,
@@ -220,10 +220,10 @@ pub mod pallet {
         OptionQuery,
     >;
 
-    /// Sekundarni indeks: view_tag → lista nonce-ova objava sa tim tagom.
+    /// Secondary index: view_tag → list of nonces of announcements with that tag.
     ///
-    /// Ovo je ključna prednost nad pristupom pametnog ugovora:
-    /// runtime automatski indeksira pri upisu, primalac ne skenira sve objave.
+    /// This is the key advantage over the smart contract approach:
+    /// the runtime automatically indexes on write; the recipient does not scan all announcements.
     #[pallet::storage]
     pub type ViewTagIndex<T: Config> = StorageMap<
         _,
@@ -233,15 +233,15 @@ pub mod pallet {
         ValueQuery,
     >;
 
-    /// Globalni monotono-rastući nonce za objave.
+    /// Global monotonically increasing nonce for announcements.
     #[pallet::storage]
     pub type AnnouncementNonce<T: Config> = StorageValue<_, u64, ValueQuery>;
 
-    /// Pool za sponzorstvo gasa.
+    /// Gas sponsorship pool.
     ///
-    /// Sponzor → deponovani iznos u planck-ovima.
-    /// Koristi se za plaćanje naknada pri povlačenju sa stealth adrese
-    /// (koja sama nema nativni token).
+    /// Sponsor → deposited amount in planck.
+    /// Used to pay fees on withdrawal from a stealth address
+    /// (which has no native token of its own).
     #[pallet::storage]
     pub type GasSponsorPool<T: Config> = StorageMap<
         _,
@@ -251,7 +251,7 @@ pub mod pallet {
         ValueQuery,
     >;
 
-    /// Delegacije viewing key-a po vlasniku.
+    /// Viewing key delegations by owner.
     #[pallet::storage]
     pub type ViewingKeyDelegations<T: Config> = StorageMap<
         _,
@@ -265,42 +265,42 @@ pub mod pallet {
     >;
 
     // =========================================================================
-    // EVENTI
+    // EVENTS
     // =========================================================================
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        /// Korisnik je registrovao stealth meta-adresu.
+        /// A user registered a stealth meta-address.
         MetaAddressRegistered {
             who: T::AccountId,
             scheme_id: u32,
         },
-        /// Korisnik je ažurirao stealth meta-adresu.
+        /// A user updated their stealth meta-address.
         MetaAddressUpdated {
             who: T::AccountId,
             scheme_id: u32,
         },
-        /// Nova stealth transakcija je objavljena.
-        /// Primaocev wallet skenira ovaj event filtrirajući po view tagu.
+        /// A new stealth transaction was announced.
+        /// The recipient's wallet scans this event filtering by view tag.
         Announced {
             nonce: u64,
             ephemeral_pubkey: [u8; 64],
             view_tag: [u8; 2],
             stealth_address: T::AccountId,
         },
-        /// Sponzor je deponovao sredstva u gas pool.
+        /// A sponsor deposited funds into the gas pool.
         GasSponsorDeposited {
             sponsor: T::AccountId,
             amount: u128,
         },
-        /// Viewing key delegiran drugom nalogu.
+        /// Viewing key delegated to another account.
         ViewingKeyDelegated {
             owner: T::AccountId,
             delegate: T::AccountId,
             valid_until: Option<BlockNumberFor<T>>,
         },
-        /// Cross-chain stealth plaćanje pallet-assets tokena (USDC itd.) poslato.
+        /// Cross-chain stealth payment of a pallet-assets token (USDC, etc.) sent.
         StealthAssetXcmSent {
             dest_para_id: u32,
             asset_id: T::AssetId,
@@ -308,19 +308,19 @@ pub mod pallet {
             amount: u128,
             announcement_nonce: u64,
         },
-        /// Cross-chain stealth plaćanje nativnog tokena poslato.
+        /// Cross-chain stealth payment of the native token sent.
         StealthXcmSent {
             dest_para_id: u32,
             stealth_address: [u8; 32],
             amount: u128,
             announcement_nonce: u64,
         },
-        /// Sredstva povučena sa stealth adrese uz gas sponzorstvo.
+        /// Funds withdrawn from a stealth address with gas sponsorship.
         ///
-        /// Relayer je platio Substrate tx naknadu; sponzor mu je refundirao
-        /// `sponsor_fee` iz svog pool-a; destination dobija ceo stealth balans.
-        /// `asset_id = None` znači nativni token (PAS/DOT);
-        /// `asset_id = Some(id)` znači pallet-assets token (rSDC, USDC...).
+        /// The relayer paid the Substrate tx fee; the sponsor refunded them
+        /// `sponsor_fee` from their pool; the destination receives the full stealth balance.
+        /// `asset_id = None` means the native token (PAS/DOT);
+        /// `asset_id = Some(id)` means a pallet-assets token (rSDC, USDC...).
         StealthWithdrawal {
             stealth_address: T::AccountId,
             destination: T::AccountId,
@@ -332,31 +332,31 @@ pub mod pallet {
     }
 
     // =========================================================================
-    // GREŠKE
+    // ERRORS
     // =========================================================================
 
     #[pallet::error]
     pub enum Error<T> {
-        /// Meta-adresa nije pronađena za dati nalog.
+        /// Meta-address not found for the given account.
         MetaAddressNotFound,
-        /// View tag indeks je pun za dati tag.
+        /// View tag index is full for the given tag.
         ViewTagIndexFull,
-        /// Nedovoljno sredstava u gas sponsor pool-u.
+        /// Insufficient funds in the gas sponsor pool.
         InsufficientSponsorFunds,
-        /// Dostignut maksimalan broj delegacija za ovog korisnika.
+        /// Maximum number of delegations reached for this user.
         TooManyDelegations,
-        /// Korisnik pokušava da delegira samom sebi.
+        /// User is trying to delegate to themselves.
         CannotDelegateToSelf,
-        /// Depozit je ispod minimalnog praga.
+        /// Deposit is below the minimum threshold.
         DepositBelowMinimum,
-        /// XCM poruka nije mogla da se pošalje.
+        /// XCM message could not be sent.
         XcmSendFailed,
-        /// Iznos mora biti veći od nule.
+        /// Amount must be greater than zero.
         ZeroAmount,
-        /// ECDSA dokaz vlasništva nad stealth adresom nije validan.
+        /// ECDSA proof of ownership of the stealth address is invalid.
         ///
-        /// Može biti: loš potpis, recovery failure, ili recovered adresa
-        /// ne odgovara prosleđenoj stealth adresi.
+        /// Can be: bad signature, recovery failure, or the recovered address
+        /// does not match the provided stealth address.
         InvalidProof,
     }
 
@@ -366,12 +366,12 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// Registruj ili ažuriraj stealth meta-adresu.
+        /// Register or update a stealth meta-address.
         ///
-        /// Primalac poziva jednom da objavi (spending_pubkey, viewing_pubkey).
-        /// Naknadni poziv ažurira postojeću meta-adresu (za rotaciju ključeva).
+        /// The recipient calls this once to publish (spending_pubkey, viewing_pubkey).
+        /// A subsequent call updates the existing meta-address (for key rotation).
         ///
-        /// Tok: korisnik generiše k, v → K = k×G (Secp256k1), V = v×G₁ (BN254) → poziva ovu funkciju.
+        /// Flow: user generates k, v → K = k×G (Secp256k1), V = v×G₁ (BN254) → calls this function.
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::register_stealth_meta_address())]
         pub fn register_stealth_meta_address(
@@ -396,17 +396,17 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Objavi stealth transakciju.
+        /// Announce a stealth transaction.
         ///
-        /// Pošiljalac poziva nakon slanja sredstava na stealth adresu.
-        /// Runtime automatski indeksira objavu po view tagu.
+        /// The sender calls this after sending funds to the stealth address.
+        /// The runtime automatically indexes the announcement by view tag.
         ///
-        /// Tok protokola (Protocol 3):
-        /// 1. Pošiljalac generiše efemerni ključ r → R = r × G₁
-        /// 2. Izračuna b = hash(r × V), stealth_addr = keccak(K + b×G)[12:]
-        /// 3. Izračuna view_tag = hash(r × V)[0..2]
-        /// 4. Šalje sredstva na stealth_addr
-        /// 5. Pozove ovu funkciju sa (R, view_tag, stealth_addr)
+        /// Protocol flow (Protocol 3):
+        /// 1. Sender generates ephemeral key r → R = r × G₁
+        /// 2. Computes b = hash(r × V), stealth_addr = keccak(K + b×G)[12:]
+        /// 3. Computes view_tag = hash(r × V)[0..2]
+        /// 4. Sends funds to stealth_addr
+        /// 5. Calls this function with (R, view_tag, stealth_addr)
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::announce())]
         pub fn announce(
@@ -427,7 +427,7 @@ pub mod pallet {
                 metadata,
             });
 
-            // Automatski indeksiraj po view tagu — primalac filtrira bez skeniranja svega
+            // Automatically index by view tag — the recipient filters without scanning everything
             ViewTagIndex::<T>::try_mutate(view_tag, |nonces| {
                 nonces.try_push(nonce).map_err(|_| Error::<T>::ViewTagIndexFull)
             })?;
@@ -444,16 +444,16 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Deponuj sredstva u gas sponsor pool.
+        /// Deposit funds into the gas sponsor pool.
         ///
-        /// Sredstva **ostaju u sponzorovom nalogu** ali su zaključana pomoću
-        /// Balances `hold` mehanizma (`HoldReason::SponsorPool`). Ovo znači:
-        /// - Sponzor može videti zaključana sredstva u svom nalogu
-        /// - Sredstva se ne mogu potrošiti dok god su zaključana
-        /// - Palet ih oslobađa atomski pri svakom `withdraw_from_stealth` pozivu
+        /// Funds **remain in the sponsor's account** but are locked via
+        /// the Balances `hold` mechanism (`HoldReason::SponsorPool`). This means:
+        /// - The sponsor can see the locked funds in their account
+        /// - Funds cannot be spent while they are locked
+        /// - The pallet releases them atomically on each `withdraw_from_stealth` call
         ///
-        /// Prednost nad transferom na poseban pool nalog: nema `PalletId`,
-        /// nema `ExistentialDeposit` problema, jasna proveniencija sredstava.
+        /// Advantage over transferring to a dedicated pool account: no `PalletId`,
+        /// no `ExistentialDeposit` issues, clear provenance of funds.
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::sponsor_gas())]
         pub fn sponsor_gas(
@@ -464,17 +464,17 @@ pub mod pallet {
 
             ensure!(amount >= T::MinSponsorDeposit::get(), Error::<T>::DepositBelowMinimum);
 
-            // Konvertuj u BalanceOf<T> — saturated_into je bezbedan jer je
-            // BalanceOf<T> uvek AtLeast32BitUnsigned, a amount je u128.
+            // Convert to BalanceOf<T> — saturated_into is safe because
+            // BalanceOf<T> is always AtLeast32BitUnsigned and amount is u128.
             let amount_balance: BalanceOf<T> = amount.saturated_into();
 
-            // Zaključaj sredstva u sponzorovom nalogu.
-            // Ako nema dovoljno slobodnih sredstava, Balances vraća grešku.
+            // Lock funds in the sponsor's account.
+            // If there are not enough free funds, Balances returns an error.
             let hold_reason: T::RuntimeHoldReason = HoldReason::SponsorPool.into();
             T::NativeBalance::hold(&hold_reason, &who, amount_balance)
                 .map_err(|_| Error::<T>::InsufficientSponsorFunds)?;
 
-            // Ažuriraj pool evidenciju (u128 za lakšu upotrebu u logici)
+            // Update the pool record (u128 for easier use in logic)
             GasSponsorPool::<T>::mutate(&who, |deposit| {
                 *deposit = deposit.saturating_add(amount);
             });
@@ -483,12 +483,12 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Delegiraj viewing key drugom nalogu za selektivno otkrivanje.
+        /// Delegate the viewing key to another account for selective disclosure.
         ///
-        /// Korisnik može dati poreskom inspektoru, računovođi ili regulatoru privremeni
-        /// pristup viewing key-u bez otkrivanja spending key-a ili drugih transakcija.
+        /// A user can give a tax inspector, accountant, or regulator temporary
+        /// access to the viewing key without revealing the spending key or other transactions.
         ///
-        /// Viewing key mora biti enkriptovan javnim ključem delegata pre poziva.
+        /// The viewing key must be encrypted with the delegate's public key before calling.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::delegate_viewing_key())]
         pub fn delegate_viewing_key(
@@ -517,22 +517,22 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Pošalji nativni token na stealth adresu na drugom parachain-u.
+        /// Send the native token to a stealth address on another parachain.
         ///
-        /// Atomski radi dve stvari:
-        /// 1. Šalje XCM teleport poruku — tokeni stižu direktno na stealth adresu
-        /// 2. Upisuje announcement lokalno — primalac skenira ovaj lanac
+        /// Atomically does two things:
+        /// 1. Sends an XCM teleport message — tokens arrive directly at the stealth address
+        /// 2. Writes the announcement locally — the recipient scans this chain
         ///
-        /// Primalac na dest parachain-u prima tokene, a objavu pronalazi
-        /// skeniranjem ViewTagIndex na OVOM parachain-u.
+        /// The recipient on the dest parachain receives the tokens, and finds the
+        /// announcement by scanning ViewTagIndex on THIS parachain.
         ///
-        /// Parametri:
-        /// - `dest_para_id`    : ID odredišnog parachain-a (npr. 1000 za Asset Hub)
-        /// - `stealth_address` : 32-bajtna adresa na odredištu (AccountId32)
-        /// - `amount`          : iznos u planck-ovima nativnog tokena
-        /// - `ephemeral_pubkey`: R = r × G₁ (BN254, 64 bajta)
-        /// - `view_tag`        : prva 2 bajta od hash(r × V)
-        /// - `metadata`        : opcionalni metapodaci (32 bajta)
+        /// Parameters:
+        /// - `dest_para_id`    : destination parachain ID (e.g. 1000 for Asset Hub)
+        /// - `stealth_address` : 32-byte address on the destination (AccountId32)
+        /// - `amount`          : amount in planck of the native token
+        /// - `ephemeral_pubkey`: R = r × G₁ (BN254, 64 bytes)
+        /// - `view_tag`        : first 2 bytes of hash(r × V)
+        /// - `metadata`        : optional metadata (32 bytes)
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::send_stealth_xcm())]
         pub fn send_stealth_xcm(
@@ -548,7 +548,7 @@ pub mod pallet {
 
             ensure!(amount > 0, Error::<T>::ZeroAmount);
 
-            // ── 1. Konstruiši XCM poruku ──────────────────────────────────────
+            // ── 1. Build XCM message ──────────────────────────────────────────
             let dest: Location = Location::new(1, [Junction::Parachain(dest_para_id)]);
 
             let beneficiary: Location = Location::new(
@@ -561,8 +561,8 @@ pub mod pallet {
                 fun: Fungible(amount),
             };
 
-            // Teleport: pošiljaoc para → relay → dest para
-            // Destination chain prima `ReceiveTeleportedAsset` i deponuje na stealth adresu.
+            // Teleport: source para → relay → dest para
+            // Destination chain receives `ReceiveTeleportedAsset` and deposits to the stealth address.
             let xcm: Xcm<()> = Xcm(vec![
                 ReceiveTeleportedAsset(vec![asset.clone()].into()),
                 ClearOrigin,
@@ -576,7 +576,7 @@ pub mod pallet {
                 },
             ]);
 
-            // Validuj i pošalji
+            // Validate and send
             let (ticket, _) = T::XcmSender::validate(
                 &mut Some(dest),
                 &mut Some(xcm),
@@ -585,8 +585,8 @@ pub mod pallet {
             T::XcmSender::deliver(ticket)
                 .map_err(|_| Error::<T>::XcmSendFailed)?;
 
-            // ── 2. Upiši announcement lokalno ─────────────────────────────────
-            // Primalac skenira ViewTagIndex na ovom lancu da pronađe svoju uplatu.
+            // ── 2. Write announcement locally ────────────────────────────────
+            // The recipient scans ViewTagIndex on this chain to find their payment.
             let nonce = AnnouncementNonce::<T>::get();
 
             let stealth_account = T::AccountId::decode(
@@ -616,31 +616,31 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Povuci sredstva sa stealth adrese uz gas sponzorstvo.
+        /// Withdraw funds from a stealth address with gas sponsorship.
         ///
-        /// Ovo je **permissionless** operacija — bilo ko (relayer, frontend) može
-        /// da pošalje ovu transakciju u ime korisnika. Korisnik samo treba da
-        /// potpiše poruku offline, koristeći privatni ključ stealth adrese.
+        /// This is a **permissionless** operation — anyone (relayer, frontend) can
+        /// send this transaction on behalf of the user. The user only needs to
+        /// sign the message offline using the private key of the stealth address.
         ///
-        /// ## Tok
+        /// ## Flow
         ///
-        /// 1. Stealth key holder potpiše offline: `keccak256("PrivyDot::withdraw:v1" ‖ stealth_addr ‖ destination_addr)`
-        /// 2. Relayer pošalje ovaj extrinsic (plaća Substrate tx naknadu iz svog naloga)
-        /// 3. Palet verifikuje ECDSA potpis:
-        ///    - Recover uncompressed pubkey (64B) iz potpisa
-        ///    - Kompresuje u 33B (0x02/0x03 prefiks + x koordinata)
-        ///    - `blake2_256(compressed)` mora biti jednako `stealth_address`
-        /// 4. Palet oslobađa `WithdrawalFee` iz sponzorovog hold-a → transfer sponzor → relayer
-        /// 5. Palet transferuje ceo stealth balans → destination
+        /// 1. Stealth key holder signs offline: `keccak256("PrivyDot::withdraw:v1" ‖ stealth_addr ‖ destination_addr)`
+        /// 2. Relayer sends this extrinsic (pays the Substrate tx fee from their account)
+        /// 3. Pallet verifies the ECDSA signature:
+        ///    - Recover uncompressed pubkey (64B) from the signature
+        ///    - Compress to 33B (0x02/0x03 prefix + x coordinate)
+        ///    - `blake2_256(compressed)` must equal `stealth_address`
+        /// 4. Pallet releases `WithdrawalFee` from the sponsor's hold → transfer sponsor → relayer
+        /// 5. Pallet transfers the entire stealth balance → destination
         ///
-        /// ## Bezbednost
+        /// ## Security
         ///
-        /// - Replay zaštita: potpis uključuje destination i asset_id; posle prvog
-        ///   izvršenja stealth balans je 0, pa drugi pokušaj pada na `ZeroAmount`.
-        /// - Sponzor može biti isti kao relayer (self-sponsorship).
-        /// - `v` bajt potpisa se normalizuje: prihvata i 0/1 i 27/28 (Ethereum format).
-        /// - `asset_id = None` → povlači nativni token (PAS/DOT).
-        /// - `asset_id = Some(id)` → povlači pallet-assets token (rSDC, USDC...).
+        /// - Replay protection: the signature includes destination and asset_id; after the first
+        ///   execution the stealth balance is 0, so a second attempt fails with `ZeroAmount`.
+        /// - Sponsor can be the same as the relayer (self-sponsorship).
+        /// - `v` byte of the signature is normalized: accepts both 0/1 and 27/28 (Ethereum format).
+        /// - `asset_id = None` → withdraws the native token (PAS/DOT).
+        /// - `asset_id = Some(id)` → withdraws a pallet-assets token (rSDC, USDC...).
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::withdraw_from_stealth())]
         pub fn withdraw_from_stealth(
@@ -650,36 +650,36 @@ pub mod pallet {
             sig: [u8; 65],
             sponsor: T::AccountId,
             asset_id: Option<T::AssetId>,
-            amount: Option<u128>, // None = ceo balans, Some(n) = tačan iznos
+            amount: Option<u128>, // None = entire balance, Some(n) = exact amount
         ) -> DispatchResult {
             let relayer = ensure_signed(origin)?;
 
-            // ── 1. Verifikuj ECDSA dokaz vlasništva ──────────────────────────
+            // ── 1. Verify ECDSA proof of ownership ───────────────────────────
 
-            // Poruka uključuje asset_id i amount da spreči reupotrebu potpisa
+            // Message includes asset_id and amount to prevent signature reuse
             let msg = Self::withdrawal_message(&stealth_address, &destination, &asset_id, &amount);
             let msg_hash = sp_io::hashing::blake2_256(&msg);
 
-            // Normalizuj v bajt: Ethereum koristi 27/28, sp_io očekuje 0/1
+            // Normalize v byte: Ethereum uses 27/28, sp_io expects 0/1
             let mut sig_norm = sig;
             if sig_norm[64] >= 27 {
                 sig_norm[64] -= 27;
             }
 
-            // Recover uncompressed pubkey (64B: x‖y bez 0x04 prefiksa)
+            // Recover uncompressed pubkey (64B: x‖y without 0x04 prefix)
             let pk = sp_io::crypto::secp256k1_ecdsa_recover(&sig_norm, &msg_hash)
                 .map_err(|_| Error::<T>::InvalidProof)?;
 
-            // Kompresuj: 0x02 ako je y paran, 0x03 ako je neparan
+            // Compress: 0x02 if y is even, 0x03 if y is odd
             let mut compressed = [0u8; 33];
             compressed[0] = if pk[63] & 1 == 0 { 0x02 } else { 0x03 };
             compressed[1..].copy_from_slice(&pk[..32]);
 
-            // Substrate stealth adresa = blake2_256(compressed_secp256k1_pubkey)
+            // Substrate stealth address = blake2_256(compressed_secp256k1_pubkey)
             let recovered = sp_io::hashing::blake2_256(&compressed);
             ensure!(recovered == stealth_address, Error::<T>::InvalidProof);
 
-            // ── 2. Pripremi fee i proveri sponzorov pool ──────────────────────
+            // ── 2. Prepare fee and check sponsor pool ─────────────────────────
 
             let fee = T::WithdrawalFee::get();
             let sponsor_deposit = GasSponsorPool::<T>::get(&sponsor);
@@ -687,23 +687,23 @@ pub mod pallet {
 
             let fee_balance: BalanceOf<T> = fee.saturated_into();
 
-            // ── 3. Decode stealth adrese ──────────────────────────────────────
+            // ── 3. Decode stealth address ─────────────────────────────────────
 
             let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
                 .map_err(|_| Error::<T>::InvalidProof)?;
 
-            // ── 4. Oslobodi fee iz sponzorovog hold-a → relayer ───────────────
+            // ── 4. Release fee from sponsor's hold → relayer ──────────────────
 
             let hold_reason: T::RuntimeHoldReason = HoldReason::SponsorPool.into();
             T::NativeBalance::release(&hold_reason, &sponsor, fee_balance, Precision::Exact)?;
             T::NativeBalance::transfer(&sponsor, &relayer, fee_balance, Preservation::Preserve)?;
             GasSponsorPool::<T>::mutate(&sponsor, |d| *d = d.saturating_sub(fee));
 
-            // ── 5. Transfer stealth balansa na destination ────────────────────
+            // ── 5. Transfer stealth balance to destination ────────────────────
 
             match asset_id.clone() {
                 None => {
-                    // Nativni token (PAS/DOT)
+                    // Native token (PAS/DOT)
                     let stealth_balance = T::NativeBalance::balance(&stealth_account);
                     ensure!(stealth_balance > Zero::zero(), Error::<T>::ZeroAmount);
                     let (transfer_amount, preservation): (BalanceOf<T>, Preservation) = match amount {
@@ -719,7 +719,7 @@ pub mod pallet {
                     )?;
                 }
                 Some(ref id) => {
-                    // pallet-assets token (rSDC, USDC...)
+                    // pallet-assets token (rSDC, USDC, ...)
                     let asset_balance: AssetBalanceOf<T> =
                         <T::Assets as FungiblesInspect<T::AccountId>>::balance(
                             id.clone(),
@@ -753,15 +753,15 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Pošalji pallet-assets token (USDC itd.) na stealth adresu na drugom parachain-u.
+        /// Send a pallet-assets token (USDC, etc.) to a stealth address on another parachain.
         ///
-        /// Atomski:
-        /// 1. Spaljuje (burn) asset od pošiljaoca na ovom lancu
-        /// 2. Šalje XCM `ReceiveTeleportedAsset` poruку odredišnom parachain-u
-        /// 3. Upisuje announcement na ovom lancu — primalac skenira ovaj lanac
+        /// Atomically:
+        /// 1. Burns the asset from the sender on this chain
+        /// 2. Sends an XCM `ReceiveTeleportedAsset` message to the destination parachain
+        /// 3. Writes the announcement on this chain — the recipient scans this chain
         ///
-        /// Odredišni parachain mora imati isti asset (isti asset ID, isti pallet index)
-        /// i mora biti poverljiv teleport partner (`IsTeleporter = Everything`).
+        /// The destination parachain must have the same asset (same asset ID, same pallet index)
+        /// and must be a trusted teleport partner (`IsTeleporter = Everything`).
         #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::send_stealth_xcm())]
         pub fn send_stealth_asset_xcm(
@@ -777,7 +777,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             ensure!(amount > 0, Error::<T>::ZeroAmount);
 
-            // ── 1. Spali asset od pošiljaoca ─────────────────────────────────
+            // ── 1. Burn asset from sender ─────────────────────────────────────
             let amount_balance: AssetBalanceOf<T> = amount.saturated_into();
             <T::Assets as FungiblesMutate<T::AccountId>>::burn_from(
                 asset_id.clone(),
@@ -788,9 +788,9 @@ pub mod pallet {
                 Fortitude::Polite,
             )?;
 
-            // ── 2. Konstruiši XCM Transact poruku ────────────────────────────
-            // Enkoduj poziv receive_stealth_asset_xcm na odredišnom lancu.
-            // Oba lanca koriste isti runtime, pa je enkodovanje identično.
+            // ── 2. Build XCM Transact message ────────────────────────────────
+            // Encode the receive_stealth_asset_xcm call on the destination chain.
+            // Both chains use the same runtime, so encoding is identical.
             let dest: Location = Location::new(1, [Junction::Parachain(dest_para_id)]);
 
             let receive_call: <T as Config>::RuntimeCall = Call::<T>::receive_stealth_asset_xcm {
@@ -819,7 +819,7 @@ pub mod pallet {
             T::XcmSender::deliver(ticket)
                 .map_err(|_| Error::<T>::XcmSendFailed)?;
 
-            // ── 3. Upiši announcement lokalno ────────────────────────────────
+            // ── 3. Write announcement locally ────────────────────────────────
             let nonce = AnnouncementNonce::<T>::get();
 
             let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
@@ -849,13 +849,13 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Prima XCM stealth asset transfer i mintuje token na stealth adresu.
+        /// Receives an XCM stealth asset transfer and mints the token to the stealth address.
         ///
-        /// Ovaj extrinsic poziva odredišni parachain automatski putem XCM Transact.
-        /// Ne treba ga korisnik pozivati direktno.
+        /// This extrinsic is called automatically by the destination parachain via XCM Transact.
+        /// Users should not call it directly.
         ///
-        /// Poziv dolazi od sovereign account-a pošiljaoca — `ensure_signed` prihvata
-        /// jer je sovereign account validan AccountId na odredištu.
+        /// The call comes from the sender's sovereign account — `ensure_signed` accepts it
+        /// because a sovereign account is a valid AccountId on the destination.
         #[pallet::call_index(7)]
         #[pallet::weight(T::WeightInfo::announce())]
         pub fn receive_stealth_asset_xcm(
@@ -870,7 +870,7 @@ pub mod pallet {
             let _relayer = ensure_signed(origin)?;
             ensure!(amount > 0, Error::<T>::ZeroAmount);
 
-            // ── 1. Mintuj asset na stealth adresu ────────────────────────────
+            // ── 1. Mint asset to stealth address ─────────────────────────────
             let stealth_account = T::AccountId::decode(&mut stealth_address.as_ref())
                 .map_err(|_| Error::<T>::InvalidProof)?;
 
@@ -881,7 +881,7 @@ pub mod pallet {
                 amount_balance,
             )?;
 
-            // ── 2. Upiši announcement ─────────────────────────────────────────
+            // ── 2. Write announcement ─────────────────────────────────────────
             let nonce = AnnouncementNonce::<T>::get();
 
             Announcements::<T>::insert(nonce, Announcement {
@@ -909,17 +909,17 @@ pub mod pallet {
     }
 
     // =========================================================================
-    // INTERNI HELPERI
+    // INTERNAL HELPERS
     // =========================================================================
 
     impl<T: Config> Pallet<T> {
-        /// Konstruiše poruku koju stealth key holder potpisuje za povlačenje.
+        /// Constructs the message that the stealth key holder signs for withdrawal.
         ///
         /// Format: `"PrivyDot::withdraw:v2" ‖ stealth[32] ‖ dest_encoded ‖ asset_id_encoded ‖ amount_encoded`
         ///
-        /// `asset_id = None` → nativni token; `Some(id)` → pallet-assets token.
-        /// `amount = None` → ceo balans; `Some(n)` → tačan iznos.
-        /// Uključivanje asset_id i amount sprečava reupotrebu potpisa.
+        /// `asset_id = None` → native token; `Some(id)` → pallet-assets token.
+        /// `amount = None` → entire balance; `Some(n)` → exact amount.
+        /// Including asset_id and amount prevents signature reuse.
         pub(crate) fn withdrawal_message(
             stealth: &[u8; 32],
             dest: &T::AccountId,
@@ -943,23 +943,23 @@ pub mod pallet {
     }
 
     // =========================================================================
-    // JAVNI HELPERI (za XCM i RPC)
+    // PUBLIC HELPERS (for XCM and RPC)
     // =========================================================================
 
     impl<T: Config> Pallet<T> {
-        /// Vrati stealth meta-adresu za dati nalog.
-        /// Pozivaju ga drugi parachain-ovi putem XCM `Transact` poruke.
+        /// Return the stealth meta-address for the given account.
+        /// Called by other parachains via XCM `Transact` message.
         pub fn resolve_meta_address(account: &T::AccountId) -> Option<StealthMetaAddress> {
             StealthMetaAddressRegistry::<T>::get(account)
         }
 
-        /// Vrati nonce-ove svih objava sa datim view tagom.
-        /// Ovo je RPC metoda koju primaocev wallet koristi za efikasno skeniranje.
+        /// Return the nonces of all announcements with the given view tag.
+        /// This is the RPC method used by the recipient's wallet for efficient scanning.
         pub fn get_announcements_by_view_tag(view_tag: [u8; 2]) -> Vec<u64> {
             ViewTagIndex::<T>::get(view_tag).into_inner()
         }
 
-        /// Vrati konkretnu objavu po nonce-u.
+        /// Return a specific announcement by nonce.
         pub fn get_announcement(nonce: u64) -> Option<Announcement<T::AccountId>> {
             Announcements::<T>::get(nonce)
         }

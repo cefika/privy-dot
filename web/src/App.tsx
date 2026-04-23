@@ -129,7 +129,7 @@ export default function App() {
 
   const refreshBalance = useCallback(async (addr: string) => {
     try {
-      // Koristi MetaMask-ov provajder ako postoji — da bude konzistentno sa Send panelom
+      // Use MetaMask provider if available — consistent with Send panel
       const p = (signer as any)?.provider ?? provider;
       const b = await p.getBalance(addr);
       setBalance(parseFloat(ethers.formatEther(b)).toFixed(4));
@@ -143,7 +143,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [address, refreshBalance]);
 
-  // Scan logika — poziva se pri konektu, na intervalu i ručno iz sidebar-a
+  // Scan logic — called on connect, on interval, and manually from sidebar
   const runScan = useCallback(async () => {
     if (!subSigner || !keys || !wasmReady) return;
     setAutoScanning(true);
@@ -200,7 +200,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [subSigner, keys, sourcePara, destPara, wasmReady, runScan]);
 
-  // EVM scan — isti flow kao Substrate ali koristi provider za EVM balanse
+  // EVM scan — same flow as Substrate but uses provider for EVM balances
   const runScanEvm = useCallback(async () => {
     if (!signer || !keys || !wasmReady) return;
     setAutoScanning(true);
@@ -256,7 +256,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [signer, keys, sourcePara, destPara, wasmReady, runScanEvm]);
 
-  // Osvežava balanse već pronađenih stealth adresa svakih 15s
+  // Refreshes balances of already found stealth addresses every 15s
   const foundRef = useRef<FoundAddress[]>([]);
   foundRef.current = foundAddresses;
   useEffect(() => {

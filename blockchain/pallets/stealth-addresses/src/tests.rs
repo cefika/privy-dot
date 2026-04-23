@@ -5,7 +5,7 @@ use crate::{
 use frame::testing_prelude::*;
 use sp_core::{ecdsa, Pair as PairT};
 
-// ─── Helpers za dummy podatke ────────────────────────────────────────────────
+// ─── Helpers for dummy data ──────────────────────────────────────────────────
 
 fn dummy_spending_pubkey() -> [u8; 33] {
     let mut k = [0u8; 33];
@@ -26,10 +26,10 @@ fn dummy_ephemeral_pubkey() -> [u8; 64] {
     r
 }
 
-/// Kreira ECDSA par ključeva i vraća:
-/// - par (za potpisivanje u testu)
-/// - stealth_address kao [u8; 32] = blake2_256(compressed_pk)
-/// - decoded u64 AccountId (Substrate koristi prve 8 bajtova, little-endian)
+/// Creates an ECDSA key pair and returns:
+/// - the pair (for signing in tests)
+/// - stealth_address as [u8; 32] = blake2_256(compressed_pk)
+/// - decoded u64 AccountId (Substrate uses the first 8 bytes, little-endian)
 fn make_stealth_key(seed: u8) -> (ecdsa::Pair, [u8; 32], u64) {
     let pair = ecdsa::Pair::from_seed(&[seed; 32]);
     let compressed: [u8; 33] = pair.public().0;
@@ -38,8 +38,8 @@ fn make_stealth_key(seed: u8) -> (ecdsa::Pair, [u8; 32], u64) {
     (pair, addr_bytes, account_id)
 }
 
-/// Gradi withdrawal poruku identično kao u paletu.
-/// `asset_id = None` → nativni token; `Some(id)` → pallet-assets token.
+/// Builds the withdrawal message identically to the pallet.
+/// `asset_id = None` → native token; `Some(id)` → pallet-assets token.
 fn build_withdrawal_msg(stealth: &[u8; 32], dest: u64, asset_id: Option<u32>, amount: Option<u128>) -> Vec<u8> {
     let dest_encoded = dest.encode();
     let asset_bytes = asset_id.encode();
@@ -53,7 +53,7 @@ fn build_withdrawal_msg(stealth: &[u8; 32], dest: u64, asset_id: Option<u32>, am
     msg
 }
 
-// ─── Postojeći testovi (registracija, announce, delegacija, sponsor) ─────────
+// ─── Existing tests (registration, announce, delegation, sponsor) ─────────────
 
 #[test]
 fn register_meta_address_works() {
@@ -209,8 +209,8 @@ fn sponsor_gas_at_minimum_emits_event() {
     });
 }
 
-/// Verifikuj da `sponsor_gas` zaista zaključava sredstva u Balances paletu.
-/// Sponzorov slobodan balans se smanjuje, a zaključan se povećava.
+/// Verify that `sponsor_gas` actually locks funds in the Balances pallet.
+/// The sponsor's free balance decreases and the held balance increases.
 #[test]
 fn sponsor_gas_actually_holds_balance() {
     new_test_ext().execute_with(|| {
@@ -220,13 +220,13 @@ fn sponsor_gas_actually_holds_balance() {
         assert_ok!(StealthAddresses::sponsor_gas(RuntimeOrigin::signed(1), 1_000_000u128));
         let free_after = Balances::free_balance(1);
 
-        // Slobodan balans se smanjio za depozit
+        // Free balance decreased by the deposit amount
         assert_eq!(free_before - free_after, 1_000_000u128);
 
-        // Pool evidencija je ažurirana
+        // Pool record is updated
         assert_eq!(GasSponsorPool::<Test>::get(1), 1_000_000u128);
 
-        // Held balans tačno odgovara depozitu — novac je zaključan, nije otišao
+        // Held balance exactly matches the deposit — funds are locked, not gone
         use frame::traits::fungible::InspectHold;
         let hold_reason =
             RuntimeHoldReason::StealthAddresses(crate::HoldReason::SponsorPool);
@@ -235,11 +235,10 @@ fn sponsor_gas_actually_holds_balance() {
     });
 }
 
-/// Sponzor nema dovoljno slobodnih sredstava — hold mora da vrati grešku.
+/// Sponsor does not have enough free funds — hold must return an error.
 #[test]
 fn sponsor_gas_fails_when_insufficient_free_balance() {
     new_test_ext().execute_with(|| {
-        // nalog 1 ima 0 tokena
         assert_noop!(
             StealthAddresses::sponsor_gas(RuntimeOrigin::signed(1), 1_000_000u128),
             Error::<Test>::InsufficientSponsorFunds
@@ -247,7 +246,6 @@ fn sponsor_gas_fails_when_insufficient_free_balance() {
     });
 }
 
-/// Višestruki depoziti od istog sponzora se akumuliraju.
 #[test]
 fn sponsor_gas_accumulates_multiple_deposits() {
     new_test_ext().execute_with(|| {
@@ -258,13 +256,6 @@ fn sponsor_gas_accumulates_multiple_deposits() {
     });
 }
 
-// ─── withdraw_from_stealth testovi ────────────────────────────────────────────
-
-/// Kompletan tok povlačenja:
-/// 1. Sponzor zaključa sredstva
-/// 2. Stealth adresa ima balans
-/// 3. Relayer dostavlja validan ECDSA dokaz
-/// 4. Palet verifikuje, prenosi fee relayeru, prebacuje stealth balans na destination
 #[test]
 fn withdraw_from_stealth_works() {
     new_test_ext().execute_with(|| {
@@ -277,7 +268,6 @@ fn withdraw_from_stealth_works() {
         let stealth_balance: u128 = 50_000_000_000;
         let fee = WithdrawalFee::get();
 
-        // Setup balansa
         fund(stealth_id, stealth_balance);
         fund(sponsor, 10_000_000_000);
         assert_ok!(StealthAddresses::sponsor_gas(
@@ -285,7 +275,6 @@ fn withdraw_from_stealth_works() {
             5_000_000_000u128,
         ));
 
-        // Potpiši withdrawal poruku secp256k1 ključem stealth adrese
         let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
@@ -302,21 +291,16 @@ fn withdraw_from_stealth_works() {
             None,
         ));
 
-        // Stealth adresa je ispražnjena
         assert_eq!(Balances::free_balance(stealth_id), 0);
 
-        // Destination dobio ceo stealth balans
         assert_eq!(Balances::free_balance(destination), dest_balance_before + stealth_balance);
 
-        // Relayer dobio fee
         assert_eq!(Balances::free_balance(relayer), relayer_balance_before + fee);
 
-        // Pool evidencija smanjena za fee
         assert_eq!(GasSponsorPool::<Test>::get(sponsor), 5_000_000_000u128 - fee);
     });
 }
 
-/// Lažan (random) potpis mora da vrati InvalidProof.
 #[test]
 fn withdraw_from_stealth_invalid_signature_fails() {
     new_test_ext().execute_with(|| {
@@ -345,13 +329,11 @@ fn withdraw_from_stealth_invalid_signature_fails() {
     });
 }
 
-/// Potpis je validan ali za drugačiji ključ (različita stealth adresa).
-/// Recovered adresa ne poklapa stealth_address → InvalidProof.
 #[test]
 fn withdraw_from_stealth_wrong_key_fails() {
     new_test_ext().execute_with(|| {
         let (_, stealth_addr_bytes, stealth_id) = make_stealth_key(1);
-        let (other_pair, _, _) = make_stealth_key(2); // drugi ključ
+        let (other_pair, _, _) = make_stealth_key(2); 
 
         fund(stealth_id, 10_000_000_000);
         fund(99, 5_000_000_000);
@@ -360,7 +342,6 @@ fn withdraw_from_stealth_wrong_key_fails() {
             1_000_000_000u128,
         ));
 
-        // Potpisujemo sa POGREŠNIM ključem
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let bad_sig: [u8; 65] = other_pair.sign(&msg).0;
 
@@ -379,8 +360,6 @@ fn withdraw_from_stealth_wrong_key_fails() {
     });
 }
 
-/// Potpis validan, ali destination u poruci se razlikuje od prosleđenog.
-/// Recovered adresa neće odgovarati → InvalidProof.
 #[test]
 fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
     new_test_ext().execute_with(|| {
@@ -392,7 +371,6 @@ fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
             1_000_000_000u128,
         ));
 
-        // Potpišemo za destination=100 ali prosleđujemo destination=999
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
@@ -400,7 +378,7 @@ fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
             StealthAddresses::withdraw_from_stealth(
                 RuntimeOrigin::signed(200),
                 stealth_addr_bytes,
-                999u64, // ← ne odgovara potpisanom destination-u
+                999u64, 
                 sig,
                 99u64,
                 None,
@@ -411,14 +389,12 @@ fn withdraw_from_stealth_wrong_destination_in_sig_fails() {
     });
 }
 
-/// Sponzor nema dovoljno u pool-u da pokrije fee → InsufficientSponsorFunds.
 #[test]
 fn withdraw_from_stealth_insufficient_sponsor_funds_fails() {
     new_test_ext().execute_with(|| {
         let (pair, stealth_addr_bytes, stealth_id) = make_stealth_key(4);
         fund(stealth_id, 10_000_000_000);
 
-        // Sponsor 99 nema nikakav depozit u pool-u
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
@@ -428,7 +404,7 @@ fn withdraw_from_stealth_insufficient_sponsor_funds_fails() {
                 stealth_addr_bytes,
                 100u64,
                 sig,
-                99u64, // sponsor bez pool balansa
+                99u64, 
                 None,
                 None,
             ),
@@ -437,20 +413,18 @@ fn withdraw_from_stealth_insufficient_sponsor_funds_fails() {
     });
 }
 
-/// Stealth adresa postoji ali ima 0 balansa → ZeroAmount.
 #[test]
 fn withdraw_from_stealth_zero_balance_fails() {
     new_test_ext().execute_with(|| {
         let (pair, stealth_addr_bytes, _stealth_id) = make_stealth_key(5);
 
-        // Sponzor ima depozit
         fund(99, 5_000_000_000);
         assert_ok!(StealthAddresses::sponsor_gas(
             RuntimeOrigin::signed(99),
             1_000_000_000u128,
         ));
 
-        // Stealth adresa nema tokena
+        
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 
@@ -469,7 +443,6 @@ fn withdraw_from_stealth_zero_balance_fails() {
     });
 }
 
-/// Replay isti withdrawal dva puta — drugi pokušaj pada jer je stealth balans 0.
 #[test]
 fn withdraw_from_stealth_replay_fails_after_first() {
     new_test_ext().execute_with(|| {
@@ -485,8 +458,7 @@ fn withdraw_from_stealth_replay_fails_after_first() {
 
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
-
-        // Prvi poziv uspeva
+        
         assert_ok!(StealthAddresses::withdraw_from_stealth(
             RuntimeOrigin::signed(200),
             stealth_addr_bytes,
@@ -496,8 +468,7 @@ fn withdraw_from_stealth_replay_fails_after_first() {
             None,
             None,
         ));
-
-        // Isti potpis, isti poziv — stealth balans je sad 0
+        
         assert_noop!(
             StealthAddresses::withdraw_from_stealth(
                 RuntimeOrigin::signed(200),
@@ -512,10 +483,7 @@ fn withdraw_from_stealth_replay_fails_after_first() {
         );
     });
 }
-// ─── fungibles (pallet-assets) testovi ───────────────────────────────────────
 
-/// Kompletan tok povlačenja rSDC (pallet-assets) tokena sa stealth adrese.
-/// Gas fee plaća sponzor u PAS-u; samo rSDC token se prenosi na destination.
 #[test]
 fn withdraw_asset_from_stealth_works() {
     new_test_ext().execute_with(|| {
@@ -529,14 +497,14 @@ fn withdraw_asset_from_stealth_works() {
         let asset_amount: u128 = 1_000_000;
         let fee = WithdrawalFee::get();
 
-        // Sponzor zaključava PAS za gas
+        
         fund(sponsor, 10_000_000_000);
         assert_ok!(StealthAddresses::sponsor_gas(
             RuntimeOrigin::signed(sponsor),
             5_000_000_000u128,
         ));
 
-        // Kreiraj rSDC i mintuj na stealth adresu (stealth nema PAS)
+        
         create_and_mint_asset(asset_id, sponsor, stealth_id, asset_amount);
 
         let msg = build_withdrawal_msg(&stealth_addr_bytes, destination, Some(asset_id), None);
@@ -554,19 +522,17 @@ fn withdraw_asset_from_stealth_works() {
             None,
         ));
 
-        // Destination dobio rSDC
+        
         assert_eq!(Assets::balance(asset_id, &destination), asset_amount);
-        // Stealth adresa ispražnjena
+        
         assert_eq!(Assets::balance(asset_id, &stealth_id), 0u128);
-        // Relayer dobio gas fee u PAS-u
+        
         assert_eq!(Balances::free_balance(relayer), relayer_pas_before + fee);
-        // Pool smanjen
+        
         assert_eq!(GasSponsorPool::<Test>::get(sponsor), 5_000_000_000u128 - fee);
     });
 }
 
-/// Potpis za nativni token (None) se ne može upotrebiti za asset withdrawal (Some).
-/// Mismatch u asset_id → mismatch u message hash → InvalidProof.
 #[test]
 fn withdraw_asset_wrong_asset_id_in_sig_fails() {
     new_test_ext().execute_with(|| {
@@ -580,7 +546,7 @@ fn withdraw_asset_wrong_asset_id_in_sig_fails() {
             1_000_000_000u128,
         ));
 
-        // Potpisan za None, ali šaljemo Some(1)
+        
         let msg = build_withdrawal_msg(&stealth_addr_bytes, 100u64, None, None);
         let sig: [u8; 65] = pair.sign(&msg).0;
 

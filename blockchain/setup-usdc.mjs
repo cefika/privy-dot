@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Kreira USDC asset (id=1) na Para 2000 sa is_sufficient=true.
+ * Creates the USDC asset (id=1) on Para 2000 with is_sufficient=true.
  *
- * is_sufficient=true znaci da account moze da primi USDC cak i ako nema
- * ni jedan PAS — sto je kljucno za stealth adrese koje su uvek nove/prazne.
+ * is_sufficient=true means an account can receive USDC even if it has
+ * no PAS — which is crucial for stealth addresses that are always new/empty.
  *
- * Ako asset vec postoji, skripta ga najpre destroy-uje pa recreate-uje.
+ * If the asset already exists, the script first destroys it and then recreates it.
  *
- * Koriscenje:
- *   node setup-usdc.mjs [--para2000 ws://127.0.0.1:9935] [--mint <adresa> <iznos_usdc>]
+ * Usage:
+ *   node setup-usdc.mjs [--para2000 ws://127.0.0.1:9935] [--mint <address> <amount_usdc>]
  *
- * Primeri:
+ * Examples:
  *   node setup-usdc.mjs
  *   node setup-usdc.mjs --mint 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY 5
  */
@@ -20,14 +20,13 @@ import { ApiPromise, WsProvider, Keyring } from "@polkadot/api";
 const ASSET_ID = 1;
 const PARA_2000_WS = process.env.PARA2000_WS ?? "ws://127.0.0.1:9935";
 
-// Parse --mint <adresa> <iznos>
 let mintTo = null;
 let mintAmount = 0n;
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--mint" && args[i + 1] && args[i + 2]) {
     mintTo = args[i + 1];
-    mintAmount = BigInt(Math.round(parseFloat(args[i + 2]) * 1_000_000)); // 6 decimala
+    mintAmount = BigInt(Math.round(parseFloat(args[i + 2]) * 1_000_000)); // 6 decimals
     i += 2;
   }
 }
@@ -36,7 +35,6 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// Potpisuje i šalje tx, čeka InBlock
 function send(tx, signer) {
   return new Promise((resolve, reject) => {
     let unsub;
@@ -66,10 +64,9 @@ async function main() {
 
   console.log(`Alice address: ${alice.address}`);
 
-  // Proveri da li asset vec postoji
   const assetInfo = await api.query.assets.asset(ASSET_ID);
   const exists = assetInfo.isSome;
-  console.log(`Asset ${ASSET_ID} postoji: ${exists}`);
+  console.log(`Asset ${ASSET_ID} exists: ${exists}`);
 
   if (exists) {
     const status = assetInfo.unwrap().status.toString();
@@ -83,13 +80,11 @@ async function main() {
     }
 
     console.log("→ destroyAccounts...");
-    // Pozivamo dok ne izbrisemo sve accounte (max 10 pokusaja)
     for (let i = 0; i < 10; i++) {
       try {
         await send(api.tx.assets.destroyAccounts(ASSET_ID), alice);
         console.log(`  destroyAccounts OK (pokusaj ${i + 1})`);
       } catch (e) {
-        // Ako nema vise accounta, pall ce baciti gresku — nastavljamo
         console.log(`  destroyAccounts: ${e.message}`);
         break;
       }
@@ -114,25 +109,24 @@ async function main() {
     await sleep(3000);
   }
 
-  // forceCreate zahteva Root origin → koristimo sudo
   console.log("→ sudo(assets.forceCreate) sa is_sufficient=true...");
   const forceCreateCall = api.tx.assets.forceCreate(
     ASSET_ID,
-    alice.address,  // owner
-    true,           // is_sufficient — kljucno! svaka adresa moze primiti USDC bez PAS-a
-    1               // min_balance
+    alice.address,  
+    true,           
+    1               
   );
   await send(api.tx.sudo.sudo(forceCreateCall), alice);
   console.log("  OK");
   await sleep(2000);
 
-  // setMetadata
+  
   console.log("→ assets.setMetadata...");
   await send(api.tx.assets.setMetadata(ASSET_ID, "USDC", "USDC", 6), alice);
   console.log("  OK");
   await sleep(2000);
 
-  // Opciono: mint
+  
   if (mintTo) {
     console.log(`→ assets.mint → ${mintTo} (${mintAmount} planck = ${Number(mintAmount) / 1_000_000} USDC)...`);
     await send(api.tx.assets.mint(ASSET_ID, mintTo, mintAmount.toString()), alice);
@@ -141,7 +135,7 @@ async function main() {
 
   const meta = await api.query.assets.metadata(ASSET_ID);
   const info2 = await api.query.assets.asset(ASSET_ID);
-  console.log(`\nAsset ${ASSET_ID} spreman:`);
+  console.log(`\nAsset ${ASSET_ID} ready:`);
   console.log(`  name:         ${meta.name.toUtf8()}`);
   console.log(`  symbol:       ${meta.symbol.toUtf8()}`);
   console.log(`  decimals:     ${meta.decimals}`);
@@ -152,6 +146,6 @@ async function main() {
 }
 
 main().catch(e => {
-  console.error("GREŠKA:", e.message);
+  console.error("ERROR:", e.message);
   process.exit(1);
 });

@@ -1,7 +1,7 @@
-//! Težine operacija za pallet-stealth-addresses.
+//! Operation weights for pallet-stealth-addresses.
 //!
-//! U produkciji se ovo generiše automatski putem `frame_benchmarking`.
-//! Za sada su placeholder vrednosti — dovoljne za development i testnet.
+//! In production these are generated automatically via `frame_benchmarking`.
+//! For now these are placeholder values — sufficient for development and testnet.
 
 use frame::prelude::*;
 
@@ -14,8 +14,8 @@ pub trait WeightInfo {
     fn withdraw_from_stealth() -> Weight;
 }
 
-/// Placeholder implementacija — koristiti za development i testnet.
-/// Pre mainnet deploya pokrenuti benchmarke i zameniti stvarnim vrednostima.
+/// Placeholder implementation — use for development and testnet.
+/// Before mainnet deployment, run benchmarks and replace with real values.
 impl WeightInfo for () {
     fn register_stealth_meta_address() -> Weight {
         Weight::from_parts(20_000_000, 4_096)

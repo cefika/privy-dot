@@ -88,7 +88,7 @@ impl pallet_assets::Config for Test {
 }
 
 parameter_types! {
-    /// Naknada relayeru pri povlačenju: 1_000_000_000 planck-ova = 0.001 DOT ekvivalent.
+    /// Relayer fee on withdrawal: 1_000_000_000 planck = 0.001 DOT equivalent.
     pub const WithdrawalFee: u128 = 1_000_000_000;
 }
 
@@ -101,7 +101,7 @@ impl crate::Config for Test {
     type RuntimeHoldReason = RuntimeHoldReason;
     type AssetId = u32;
     type Assets = Assets;
-    /// () implementira SendXcm kao no-op — dovoljno za unit testove koji ne testiraju XCM.
+    /// () implements SendXcm as a no-op — sufficient for unit tests that do not test XCM.
     type XcmSender = ();
     type WeightInfo = ();
 }
@@ -110,18 +110,18 @@ pub fn new_test_ext() -> TestState {
     GenesisConfig::<Test>::default().build_storage().unwrap().into()
 }
 
-/// Postavi slobodan balans za nalog — koristi privilegovani `force_set_balance`.
-/// Mora se zvati unutar `new_test_ext().execute_with(|| { ... })`.
+/// Set the free balance for an account — uses the privileged `force_set_balance`.
+/// Must be called inside `new_test_ext().execute_with(|| { ... })`.
 pub fn fund(who: u64, amount: u128) {
     Balances::force_set_balance(RuntimeOrigin::root(), who, amount)
         .expect("force_set_balance failed in test setup");
 }
 
-/// Kreiraj pallet-assets token i mintuj ga na nalog.
-/// `asset_id` — ID tokena (npr. 1 za rSDC)
-/// `owner`    — ko kontroliše asset
-/// `to`       — ko dobija minted tokene
-/// `amount`   — koliko tokena se mintuje
+/// Create a pallet-assets token and mint it to an account.
+/// `asset_id` — token ID (e.g. 1 for rSDC)
+/// `owner`    — who controls the asset
+/// `to`       — who receives the minted tokens
+/// `amount`   — how many tokens to mint
 pub fn create_and_mint_asset(asset_id: u32, owner: u64, to: u64, amount: u128) {
     Assets::force_create(RuntimeOrigin::root(), asset_id, owner, true, 1)
         .expect("force_create failed");
