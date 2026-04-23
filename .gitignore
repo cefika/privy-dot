@@ -46,6 +46,9 @@ docker/chain_spec*.json
 # ── Go build cache ───────────────────────────────────────────────────────────
 core/curvy-core.wasm
 
+# ── GitHub Pages deploy artifacts (root-level) ───────────────────────────────
+/assets/
+
 # ── Hardhat / contract build artifacts ───────────────────────────────────────
 contracts/stealth/artifacts/
 contracts/stealth/cache/
