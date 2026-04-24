@@ -451,7 +451,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	spec_name: alloc::borrow::Cow::Borrowed("stack-template-runtime"),
 	impl_name: alloc::borrow::Cow::Borrowed("stack-template-runtime"),
 	authoring_version: 1,
-	spec_version: 4,
+	spec_version: 5,
 	impl_version: 0,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 2,
