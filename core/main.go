@@ -16,6 +16,7 @@ func main() {
 	js.Global().Set("get_meta", js.FuncOf(getMeta))
 	js.Global().Set("send", js.FuncOf(send))
 	js.Global().Set("scan", js.FuncOf(scan))
+	js.Global().Set("scan_audit", js.FuncOf(scanAudit))
 	// debugging options
 	js.Global().Set("dbg_isValidBN254Point", js.FuncOf(isValidBN254Point))
 	js.Global().Set("dbg_isValidSECP256k1Point", js.FuncOf(isValidSECP256k1Point))
@@ -37,6 +38,10 @@ func send(in js.Value, args []js.Value) interface{} {
 
 func scan(in js.Value, args []js.Value) interface{} {
 	return recipient.Scan(args[0].String())
+}
+
+func scanAudit(in js.Value, args []js.Value) interface{} {
+	return recipient.ScanAudit(args[0].String())
 }
 
 func isValidBN254Point(in js.Value, args []js.Value) interface{} {

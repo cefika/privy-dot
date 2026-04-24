@@ -1,0 +1,67 @@
+[settings]
+timeout = 1000
+provider = "native"
+
+[relaychain]
+chain = "rococo-local"
+default_command = "polkadot"
+
+  [relaychain.genesis.runtimeGenesis.patch.configuration.config]
+  async_backing_params = { max_candidate_depth = 3, allowed_ancestry_len = 2 }
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+  rpc_port = 9950
+  p2p_port = 30335
+  prometheus_port = 9617
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+  rpc_port = 9951
+  p2p_port = 30336
+  prometheus_port = 9618
+
+# ── Para 1000 — our runtime with pallet-stealth-addresses ─────────────────────
+[[parachains]]
+id = 1000
+chain = "./chain_spec.json"
+cumulus_based = true
+
+  [[parachains.collators]]
+  name = "collator-alice"
+  validator = true
+  rpc_port = 9944
+  p2p_port = 30333
+  prometheus_port = 9615
+  command = "polkadot-omni-node"
+  args = ["--alice", "--enable-statement-store"]
+
+# ── Para 2000 — druga instanca istog runtime-a (za XCM testiranje) ─────────────
+[[parachains]]
+id = 2000
+chain = "./chain_spec_2000.json"
+cumulus_based = true
+
+  [[parachains.collators]]
+  name = "collator-charlie"
+  validator = true
+  rpc_port = 9935
+  p2p_port = 30337
+  prometheus_port = 9619
+  command = "polkadot-omni-node"
+  args = ["--charlie"]
+
+# ── HRMP kanali (genesis) — DMQ mismatch bug je fixovan u cumulus vendoru ──────────
+[[hrmp_channels]]
+sender = 1000
+recipient = 2000
+max_capacity = 8
+max_message_size = 1048576
+
+[[hrmp_channels]]
+sender = 2000
+recipient = 1000
+max_capacity = 8
+max_message_size = 1048576

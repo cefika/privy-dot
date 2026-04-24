@@ -1,0 +1,39 @@
+[package]
+name = "pallet-stealth-addresses"
+description = "Stealth address protocol for Polkadot — announcement registry, view-tag index, gas sponsorship, viewing-key delegation."
+version = "0.1.0"
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+codec = { features = ["derive"], workspace = true }
+frame = { workspace = true, features = ["experimental", "runtime"], default-features = false }
+scale-info = { features = ["derive"], workspace = true }
+polkadot-sdk = { workspace = true, features = ["staging-xcm"], default-features = false }
+sp-io = { workspace = true }
+
+[dev-dependencies]
+frame = { workspace = true, features = ["std", "experimental", "runtime"] }
+sp-io = { workspace = true, features = ["std"] }
+sp-core = { workspace = true }
+polkadot-sdk = { workspace = true, features = ["pallet-balances", "pallet-assets", "std"] }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "frame/std",
+    "scale-info/std",
+    "polkadot-sdk/std",
+    "sp-io/std",
+]
+runtime-benchmarks = [
+    "frame/runtime-benchmarks",
+]
+try-runtime = [
+    "frame/try-runtime",
+]
